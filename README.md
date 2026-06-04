@@ -203,3 +203,36 @@ Tested against the real Auggie CLI (`--enhance-prompt` flag, not Antigravity `ag
 Auggie's enhancer produces a 1-sentence inline task refinement. Our tool generates a 7-section reusable system prompt document. Different tools for different use cases — Auggie is optimized for single-session agent execution; ours is optimized for team-shared, version-controlled system prompts.
 
 In agent behavior tests, enhanced prompts reduced wasted tool calls by 4.8× (43→9) when fed to Auggie.
+
+## Installing into Coding Agents
+
+Use `prompt-install.py` to pipe enhanced prompts directly into any agent's config:
+
+```bash
+# Claude Code → CLAUDE.md (auto-loaded every session)
+python3 prompt-install.py "a senior Rust dev who prefers functional style" --agent claude
+
+# Codex → .github/copilot-instructions.md
+python3 prompt-install.py "a security reviewer" --agent codex
+
+# Cursor → .cursorrules
+python3 prompt-install.py "a full-stack developer" --agent cursor
+
+# All compatible agents at once
+python3 prompt-install.py "a Go backend dev..." --agent all
+
+# Dry-run (preview without writing)
+python3 prompt-install.py "a terse reviewer" --agent codex --dry-run
+```
+
+### Supported agents
+
+| Agent | Config file | Auto-loaded? |
+|-------|------------|:---:|
+| **Claude Code** | `CLAUDE.md` | ✅ |
+| **Codex** | `.github/copilot-instructions.md` | ✅ |
+| **OpenCode** | `AGENTS.md` | ✅ |
+| **Cursor** | `.cursorrules` | ✅ |
+| **Auggie** | `AGENTS.md` | ✅ |
+| **Copilot** | `.github/copilot-instructions.md` | ✅ |
+| **Aider** | `.aider-persona.md` | `--system-prompt` flag |
