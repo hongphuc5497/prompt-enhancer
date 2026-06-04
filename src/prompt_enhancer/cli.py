@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-prompt-enhancer CLI — unified entry point.
+prompt-enhancer CLI — unified entry point (v1.2.0).
 
 Usage:
-    prompt-enhancer enhance "a Rust dev who likes functional style"
-    prompt-enhancer install "a security reviewer" --agent claude
-    prompt-enhancer benchmark --before raw.txt --after enhanced.md
-    prompt-enhancer store list
-    prompt-enhancer store stats
-    prompt-enhancer store search "keyword"
+    pe persona "a Rust dev who likes functional style"     # 7-section persistent system prompt
+    pe enhance-task "fix the login bug"                    # inline task refinement
+    pe install "a security reviewer" --agent claude         # safe install with backup
+    pe benchmark --enhance "a Go backend dev"               # benchmark before/after
+    pe store stats                                          # analytics
+    pe doctor                                               # health check
 
 Install:
     pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
@@ -20,13 +20,14 @@ import json
 import os
 import sys
 import time
+import shutil
 import argparse
 import subprocess
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Optional
 
+VERSION = "1.2.0"
 
 # ═══════════════════════════════════════════════════════════════════
 # Config
@@ -34,11 +35,10 @@ from typing import Optional
 
 STORE_DIR = Path.home() / ".prompt-enhancer"
 STORE_FILE = STORE_DIR / "store.jsonl"
-PYTHON = os.environ.get("PYTHON3", sys.executable)
 
 AGENT_CONFIGS = {
     "claude":    {"path": "CLAUDE.md", "desc": "Claude Code — auto-loaded every session"},
-    "codex":     {"path": ".github/copilot-instructions.md", "desc": "Codex (OpenAI)"},
+    "codex":     {"path": ".codex/system.md", "desc": "Codex CLI — system-level instructions"},
     "opencode":  {"path": "AGENTS.md", "desc": "OpenCode"},
     "cursor":    {"path": ".cursorrules", "desc": "Cursor"},
     "auggie":    {"path": "AGENTS.md", "desc": "Auggie (Augment)"},
@@ -46,7 +46,10 @@ AGENT_CONFIGS = {
     "aider":     {"path": None, "desc": "Aider (prints launch command)"},
 }
 
-ENHANCEMENT_PROFILES = ["senior-dev", "architect", "reviewer", "sre", "product", "mentor"]
+PROFILES = ["senior-dev", "architect", "reviewer", "sre", "product", "mentor"]
+
+CONTEXT_PATTERNS = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md"]
+STACK_SIGNALS = ["package.json", "pyproject.toml", "Cargo.toml", "go.mod", "Makefile", "docker-compose.yml"]
 
 
 def load_config():
@@ -64,6 +67,46 @@ def load_config():
     }
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Workspace Context (Auggie's #1 blocker fix)
+# ═══════════════════════════════════════════════════════════════════
+
+def collect_context(project_dir, max_content=2000):
+    """Discover and read project context files. Mirrors Auggie's workspace awareness."""
+    cwd = Path(project_dir).resolve()
+    context_parts = []
+
+    # Context files (AGENTS.md, CLAUDE.md, etc.)
+    for pattern in CONTEXT_PATTERNS:
+        for found in cwd.rglob(pattern):
+            try:
+                content = found.read_text()
+                if len(content) > max_content:
+                    content = content[:max_content] + "\n... (truncated)"
+                context_parts.append(f"## {found.name}\n```\n{content}\n```")
+            except (PermissionError, OSError):
+                continue
+            break  # only first match per pattern
+
+    # Stack signals (package.json, Cargo.toml, etc.)
+    for signal in STACK_SIGNALS:
+        path = cwd / signal
+        if path.exists():
+            try:
+                content = path.read_text()
+                if len(content) > max_content:
+                    content = content[:max_content] + "\n... (truncated)"
+                context_parts.append(f"## {signal} (tech stack)\n```\n{content}\n```")
+            except (PermissionError, OSError):
+                continue
+
+    return "\n\n".join(context_parts)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LLM
+# ═══════════════════════════════════════════════════════════════════
+
 def call_llm(prompt, config, model=None, max_tokens=4096, temperature=0.7):
     url = f"{config['base_url'].rstrip('/')}/v1/chat/completions"
     body = json.dumps({
@@ -75,13 +118,45 @@ def call_llm(prompt, config, model=None, max_tokens=4096, temperature=0.7):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {config['api_key']}")
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        return json.loads(resp.read().decode())["choices"][0]["message"]["content"]
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            result = json.loads(resp.read().decode())
+            if "choices" not in result:
+                raise ValueError(f"Unexpected API response: {json.dumps(result)[:200]}")
+            return result["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:500]
+        die(f"API error ({e.code}): {body}")
+    except urllib.error.URLError as e:
+        die(f"Connection error: {e.reason}")
+    except json.JSONDecodeError:
+        die("API returned invalid JSON. Check your LLM_BASE_URL.")
+    except Exception as e:
+        die(f"LLM call failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Store (auto-saves every enhancement)
+# Store
 # ═══════════════════════════════════════════════════════════════════
+
+STORE_INITIALIZED = False
+
+def store_init():
+    """Show first-run privacy notice."""
+    global STORE_INITIALIZED
+    if STORE_INITIALIZED:
+        return
+    STORE_INITIALIZED = True
+    marker = STORE_DIR / ".initialized"
+    if not marker.exists():
+        print("📊 Prompt Enhancer stores enhancement history locally.", file=sys.stderr)
+        print(f"   Data saved to: {STORE_FILE}", file=sys.stderr)
+        print("   Use 'pe store delete <id>' or 'pe store clear' to manage.", file=sys.stderr)
+        print("   Use --no-store to skip saving. See README for details.", file=sys.stderr)
+        print("", file=sys.stderr)
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+        marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
 
 def store_save(seed, enhanced, agent=None, project=None, profile=None, benchmark=None, duration_ms=None):
     import uuid
@@ -98,7 +173,7 @@ def store_save(seed, enhanced, agent=None, project=None, profile=None, benchmark
         "profile": profile,
         "benchmark": benchmark,
         "model": os.environ.get("LLM_MODEL", "unknown"),
-        "version": "1.0.0",
+        "version": VERSION,
         "duration_ms": duration_ms,
     }
     with open(STORE_FILE, "a") as f:
@@ -119,41 +194,62 @@ def store_read():
     return records
 
 
+def store_delete(record_id):
+    records = store_read()
+    before = len(records)
+    records = [r for r in records if r["id"] != record_id]
+    after = len(records)
+    if before == after:
+        return False
+    STORE_FILE.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n")
+    return True
+
+
+def store_clear():
+    if STORE_FILE.exists():
+        STORE_FILE.write_text("")
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════════
-# Enhancement Engine
+# Persona Engine (7-section system prompt)
 # ═══════════════════════════════════════════════════════════════════
 
-ENHANCEMENT_SYSTEM_PROMPT = """You are a prompt engineer specializing in creating system prompts for AI coding agents (Claude Code, Codex, Cursor, Hermes, Copilot). Transform a rough idea into a production-quality system prompt with 7 sections.
+PERSONA_PROMPT = """You are a prompt engineer. Transform a rough persona idea into a production-quality system prompt with 7 sections.
 
 SECTIONS: ROLE (identity) → CONTEXT (project specifics) → BEHAVIORAL RULES → TECHNICAL GUIDELINES → OUTPUT FORMAT → PITFALLS/GUARDRAILS → EXAMPLES
 
 RULES:
-- Be CONCRETE — reference actual tools, patterns, and conventions
+- Be CONCRETE — reference actual tools, patterns, and conventions from the workspace context
 - Be ACTIONABLE — rules must translate directly into agent behavior
 - Be CONCISE — 2-4 bullets per section
-- Include a "pro tip" at the end
+- Include a short "pro tip" at the end
 - Output ONLY the system prompt markdown, no preamble"""
 
 
-def enhance(seed, config, profile=None):
-    """Enhance a rough prompt into a 7-section system prompt."""
+def persona(seed, config, workspace_context="", profile=None, concise=False):
+    """Generate a 7-section system prompt."""
     profile_instruction = ""
     if profile:
         profiles = {
-            "senior-dev": "Focus on: technical depth, testing rigor, edge-case awareness.",
-            "architect": "Focus on: system design, trade-off analysis, scalability.",
-            "reviewer": "Focus on: security, performance, code smells, best-practice violations.",
-            "sre": "Focus on: observability, reliability, incident response, infrastructure as code.",
-            "product": "Focus on: user experience, feature prioritization, stakeholder communication.",
-            "mentor": "Focus on: teaching, explanation, onboarding, pair-programming style.",
+            "senior-dev": "Focus: technical depth, testing rigor, edge-case awareness.",
+            "architect": "Focus: system design, trade-off analysis, scalability.",
+            "reviewer": "Focus: security, performance, code smells, best-practices.",
+            "sre": "Focus: observability, reliability, incident response, IaC.",
+            "product": "Focus: user experience, feature prioritization, stakeholders.",
+            "mentor": "Focus: teaching, explanation, onboarding, pair-programming.",
         }
-        profile_instruction = f"\n\nProfile focus: {profiles.get(profile, '')}"
+        profile_instruction = f"\n\nProfile: {profiles.get(profile, '')}"
 
-    prompt = f"""{ENHANCEMENT_SYSTEM_PROMPT}
+    concise_note = "\n\nMake this brief — 1-2 bullets per section. Skip EXAMPLES if zero-shot is viable." if concise else ""
+    context_block = f"\n\n## Workspace context\n{workspace_context}" if workspace_context else ""
 
-## Seed prompt (rough idea)
+    prompt = f"""{PERSONA_PROMPT}{concise_note}
+
+## Seed (rough persona idea)
 {seed}
 {profile_instruction}
+{context_block}
 
 ## Output
 Output ONLY the system prompt markdown. Start with "# System Prompt: <Role Name>"."""
@@ -162,7 +258,36 @@ Output ONLY the system prompt markdown. Start with "# System Prompt: <Role Name>
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Benchmark Engine (7-dim rubric)
+# Task Enhancer (inline — Auggie-style)
+# ═══════════════════════════════════════════════════════════════════
+
+TASK_ENHANCE_PROMPT = """You are a prompt enhancer for AI coding agents. Transform a vague task request into a clear, actionable prompt.
+
+RULES:
+- Add relevant file references and context from the workspace
+- Structure the task into clear steps
+- Include relevant coding conventions and patterns
+- Ask clarifying questions if the task is ambiguous
+- Keep it concise — 3-5 sentences
+- Output ONLY the enhanced task prompt, no preamble"""
+
+
+def enhance_task(seed, config, workspace_context=""):
+    """Inline task refinement — like Auggie's Ctrl+P."""
+    context_block = f"\n\n## Workspace context\n{workspace_context}" if workspace_context else ""
+    prompt = f"""{TASK_ENHANCE_PROMPT}{context_block}
+
+## Raw task request
+{seed}
+
+## Output
+Output ONLY the enhanced task prompt."""
+
+    return call_llm(prompt, config, temperature=0.5)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Benchmark Engine
 # ═══════════════════════════════════════════════════════════════════
 
 RUBRIC_PROMPT = """Score this prompt on 7 dimensions (1-5 each, max 35):
@@ -170,7 +295,7 @@ RUBRIC_PROMPT = """Score this prompt on 7 dimensions (1-5 each, max 35):
 4. Format Structure, 5. Example Quality, 6. Constraint Tightness, 7. Output Validation
 
 Return ONLY JSON:
-{"role_clarity":{"score":N,"reasoning":"..."},"context_sufficiency":{"score":N,"reasoning":"..."},"instruction_specificity":{"score":N,"reasoning":"..."},"format_structure":{"score":N,"reasoning":"..."},"example_quality":{"score":N,"reasoning":"..."},"constraint_tightness":{"score":N,"reasoning":"..."},"output_validation":{"score":N,"reasoning":"..."},"total":N,"verdict":"production-ready|working-draft|needs-revision|rewrite","summary":"..."}
+{"role_clarity":{"score":N,"reasoning":"1 sentence"},"context_sufficiency":{"score":N,"reasoning":"1 sentence"},"instruction_specificity":{"score":N,"reasoning":"1 sentence"},"format_structure":{"score":N,"reasoning":"1 sentence"},"example_quality":{"score":N,"reasoning":"1 sentence"},"constraint_tightness":{"score":N,"reasoning":"1 sentence"},"output_validation":{"score":N,"reasoning":"1 sentence"},"total":N,"verdict":"production-ready|working-draft|needs-revision|rewrite","summary":"1-2 sentence assessment"}
 
 Prompt to score:
 ---PROMPT_START---
@@ -193,72 +318,129 @@ def benchmark_score(prompt_text, config):
 # CLI Commands
 # ═══════════════════════════════════════════════════════════════════
 
-def cmd_enhance(args):
+def cmd_persona(args):
+    """pe persona — generate 7-section system prompt."""
     config = load_config()
     if not config["api_key"]:
         die("LLM_API_KEY not set. Run: echo 'LLM_API_KEY=sk-...' > ~/.prompt-enhancer.env")
 
     seed = _get_seed(args)
-    profile = args.profile if hasattr(args, 'profile') else None
+    if not seed:
+        die("Provide a seed prompt. Usage: pe persona 'a senior Rust developer...'")
+
+    profile = getattr(args, 'profile', None)
+    project = getattr(args, 'project', str(Path.cwd()))
+    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+    concise = getattr(args, 'concise', False)
 
     t0 = time.time()
-    enhanced = enhance(seed, config, profile)
+    enhanced = persona(seed, config, workspace, profile, concise)
     duration_ms = int((time.time() - t0) * 1000)
 
-    # Print
     if getattr(args, 'json', False):
         print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "duration_ms": duration_ms}, ensure_ascii=False))
     else:
         print(enhanced)
 
-    # Auto-save to store
     if not getattr(args, 'no_store', False):
-        store_save(seed, enhanced, duration_ms=duration_ms, profile=profile)
+        store_init()
+        store_save(seed, enhanced, duration_ms=duration_ms, profile=profile, project=project)
         if not getattr(args, 'json', False):
             print(f"\n[Saved to {STORE_FILE}]", file=sys.stderr)
 
 
+def cmd_enhance_task(args):
+    """pe enhance-task — inline task refinement."""
+    config = load_config()
+    if not config["api_key"]:
+        die("LLM_API_KEY not set. Run: echo 'LLM_API_KEY=sk-...' > ~/.prompt-enhancer.env")
+
+    seed = _get_seed(args)
+    if not seed:
+        die("Provide a task. Usage: pe enhance-task 'fix the login bug'")
+
+    project = getattr(args, 'project', str(Path.cwd()))
+    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+
+    t0 = time.time()
+    enhanced = enhance_task(seed, config, workspace)
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if getattr(args, 'json', False):
+        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "duration_ms": duration_ms}, ensure_ascii=False))
+    else:
+        print(enhanced)
+
+    if not getattr(args, 'no_store', False):
+        store_init()
+        store_save(seed, enhanced, duration_ms=duration_ms, project=project)
+
+
 def cmd_install(args):
+    """pe install — safe install with backup and diff."""
     config = load_config()
     if not config["api_key"]:
         die("LLM_API_KEY not set")
 
     seed = _get_seed(args)
+    if not seed:
+        die("Provide a seed. Usage: pe install 'a security reviewer' --agent claude")
+
     profile = getattr(args, 'profile', None)
+    project = getattr(args, 'project', str(Path.cwd()))
+    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
 
     t0 = time.time()
-    enhanced = enhance(seed, config, profile)
+    enhanced = persona(seed, config, workspace, profile)
     duration_ms = int((time.time() - t0) * 1000)
 
-    # JSON mode
     if getattr(args, 'json', False):
         print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "agent": args.agent, "duration_ms": duration_ms}, ensure_ascii=False))
-        if not getattr(args, 'no_store', False):
-            store_save(seed, enhanced, args.agent, getattr(args, 'project', str(Path.cwd())), profile, duration_ms=duration_ms)
+        if not getattr(args, 'no_store', False) and not getattr(args, 'dry_run', False):
+            store_init()
+            store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms)
         return
 
-    # Write to agent config
     agents = list(AGENT_CONFIGS.keys()) if args.agent == "all" else [args.agent]
     for agent in agents:
-        if args.agent == "all" and agent == "aider":
-            continue
-        cfg = AGENT_CONFIGS.get(agent, {})
         if agent == "aider":
-            persona = Path(getattr(args, 'project', Path.cwd())) / ".aider-persona.md"
+            persona_file = Path(project) / ".aider-persona.md"
             if not getattr(args, 'dry_run', False):
-                persona.write_text(enhanced)
-            print(f"aider --system-prompt \"$(cat {persona})\"")
-        else:
-            target = Path(getattr(args, 'project', Path.cwd())) / cfg["path"]
-            comment = {"claude": "# CLAUDE.md\n", "codex": "<!-- prompt-enhancer -->\n", "cursor": "// prompt-enhancer\n"}.get(agent, "")
-            if getattr(args, 'dry_run', False):
-                print(f"Would write: {target}")
-            else:
-                target.write_text(comment + enhanced + "\n")
-                print(f"✅ {target} ({len(enhanced)} chars) — {cfg['desc']}")
+                persona_file.write_text(enhanced)
+            print(f"aider --system-prompt \"$(cat {persona_file})\"")
+            continue
+
+        cfg = AGENT_CONFIGS.get(agent, {})
+        target = Path(project) / cfg["path"]
+
+        # Dry run: show everything
+        if getattr(args, 'dry_run', False):
+            print(f"Target: {target}")
+            print(f"  Exists: {'yes' if target.exists() else 'no (will create)'}")
+            print(f"  Parent dir: {'exists' if target.parent.exists() else 'would create'}")
+            print(f"  Content ({len(enhanced)} chars):\n---\n{enhanced[:500]}...\n---")
+            continue
+
+        # Force overwrite (no backup)
+        if getattr(args, 'force', False):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(enhanced + "\n")
+            print(f"✅ {target} ({len(enhanced)} chars) — {cfg['desc']}")
+            continue
+
+        # Safe write: backup + overwrite
+        if target.exists():
+            backup = target.with_suffix(target.suffix + ".bak")
+            shutil.copy2(target, backup)
+            print(f"📦 Backed up to {backup}", file=sys.stderr)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(enhanced + "\n")
+        print(f"✅ {target} ({len(enhanced)} chars) — {cfg['desc']}")
 
     if not getattr(args, 'no_store', False) and not getattr(args, 'dry_run', False):
-        store_save(seed, enhanced, args.agent, getattr(args, 'project', str(Path.cwd())), profile, duration_ms=duration_ms)
+        store_init()
+        store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms)
 
 
 def cmd_benchmark(args):
@@ -266,19 +448,26 @@ def cmd_benchmark(args):
     if not config["api_key"]:
         die("LLM_API_KEY not set")
 
-    before_text = args.before
-    after_text = args.after
-
     if args.enhance:
+        seed = args.enhance
+        project = getattr(args, 'project', str(Path.cwd()))
+        workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
         t0 = time.time()
-        enhanced = enhance(args.enhance, config)
+        enhanced = persona(seed, config, workspace)
         duration_ms = int((time.time() - t0) * 1000)
-        before_scores = benchmark_score(args.enhance, config)
+        before_scores = benchmark_score(seed, config)
         after_scores = benchmark_score(enhanced, config)
-        store_save(args.enhance, enhanced, benchmark={"before": before_scores, "after": after_scores}, duration_ms=duration_ms)
+        store_init()
+        store_save(seed, enhanced, benchmark={"before": before_scores, "after": after_scores}, duration_ms=duration_ms, project=project)
     else:
-        before_text = Path(before_text).expanduser().read_text() if before_text and Path(before_text).exists() else (before_text or "")
-        after_text = Path(after_text).expanduser().read_text() if after_text and Path(after_text).exists() else (after_text or "")
+        before_text = args.before or ""
+        after_text = args.after or ""
+        if before_text and Path(before_text).expanduser().exists():
+            before_text = Path(before_text).expanduser().read_text()
+        if after_text and Path(after_text).expanduser().exists():
+            after_text = Path(after_text).expanduser().read_text()
+        if not before_text and not after_text:
+            die("Provide --before/--after or use --enhance")
         before_scores = benchmark_score(before_text, config) if before_text else None
         after_scores = benchmark_score(after_text, config) if after_text else None
 
@@ -289,7 +478,6 @@ def cmd_benchmark(args):
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
-    # Pretty print
     BAR = "═" * 60
     dims = [
         ("role_clarity", "Role Clarity"), ("context_sufficiency", "Context Sufficiency"),
@@ -305,7 +493,8 @@ def cmd_benchmark(args):
     if before_scores and after_scores:
         delta = after_scores.get("total", 0) - before_scores.get("total", 0)
         pct = (delta / max(before_scores.get("total", 1), 1)) * 100
-        print(f"  DELTA:   {'↑' if delta > 0 else '↓' if delta < 0 else '→'}{abs(delta)} points ({pct:+.0f}%)\n")
+        s = "↑" if delta > 0 else ("↓" if delta < 0 else "→")
+        print(f"  DELTA:   {s}{abs(delta)} points ({pct:+.0f}%)\n")
     print(f"  {'Dimension':<28} {'BEFORE':>7} {'AFTER':>7} {'Δ':>5}\n  {'-'*28} {'-'*7} {'-'*7} {'-'*5}")
     for key, label in dims:
         b_s = before_scores.get(key, {}).get("score", "—") if before_scores else "—"
@@ -374,12 +563,68 @@ def cmd_store(args):
             print(json.dumps(records, indent=2, ensure_ascii=False))
     elif action == "show":
         records = store_read()
-        rid = args.id
         for r in records:
-            if r["id"] == rid:
+            if r["id"] == args.id:
                 print(json.dumps(r, indent=2, ensure_ascii=False))
                 return
-        die(f"Record not found: {rid}")
+        die(f"Record not found: {args.id}")
+    elif action == "delete":
+        if store_delete(args.id):
+            print(f"✅ Deleted {args.id}")
+        else:
+            die(f"Record not found: {args.id}")
+    elif action == "clear":
+        if store_clear():
+            print("✅ Store cleared")
+    else:
+        die(f"Unknown store action: {action}")
+
+
+def cmd_doctor(args):
+    """pe doctor — health check."""
+    config = load_config()
+    checks = []
+
+    # Python version
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    checks.append(("Python >= 3.11", sys.version_info >= (3, 11), py_ver))
+
+    # Config
+    api_set = bool(config["api_key"])
+    checks.append(("API key set", api_set, "LLM_API_KEY" if api_set else "not set"))
+
+    # Store
+    store_exists = STORE_FILE.exists()
+    checks.append(("Store", store_exists, str(STORE_FILE) if store_exists else "no records yet"))
+
+    # Agent configs present
+    for name, cfg in AGENT_CONFIGS.items():
+        if cfg["path"]:
+            target = Path.cwd() / cfg["path"]
+            checks.append((f"Agent: {name}", target.exists(), str(target) if target.exists() else "not found in CWD"))
+
+    # LLM connectivity (only if key set)
+    if api_set:
+        try:
+            import urllib.request
+            url = f"{config['base_url'].rstrip('/')}/v1/models"
+            req = urllib.request.Request(url)
+            req.add_header("Authorization", f"Bearer {config['api_key']}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                models = len(data.get("data", [])) if isinstance(data, dict) else "ok"
+            checks.append(("LLM connectivity", True, f"{models} models"))
+        except Exception as e:
+            checks.append(("LLM connectivity", False, str(e)[:60]))
+
+    # Print
+    print(f"prompt-enhancer {VERSION} — Health Check\n")
+    for name, ok, detail in checks:
+        icon = "✅" if ok else "❌"
+        print(f"  {icon} {name:<22} {detail}")
+
+    all_ok = all(ok for _, ok, _ in checks)
+    print(f"\nOverall: {'✅ Healthy' if all_ok else '❌ Issues found'}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -388,10 +633,14 @@ def cmd_store(args):
 
 def _get_seed(args):
     if getattr(args, 'file', None):
-        return Path(args.file).expanduser().read_text().strip()
-    if args.seed == "-":
+        path = Path(args.file).expanduser()
+        if not path.exists():
+            die(f"File not found: {path}")
+        return path.read_text().strip()
+    seed = args.seed
+    if seed and seed == "-":
         return sys.stdin.read().strip()
-    return args.seed
+    return seed
 
 
 def die(msg):
@@ -404,68 +653,95 @@ def die(msg):
 # ═══════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="Prompt Enhancer — reverse-engineered from Auggie Ctrl+P")
+    parser = argparse.ArgumentParser(
+        description=f"pe — Prompt Enhancer v{VERSION}",
+        epilog="GitHub: https://github.com/hongphuc5497/prompt-enhancer"
+    )
     sub = parser.add_subparsers(dest="command")
 
-    # enhance
-    p_enh = sub.add_parser("enhance", help="Enhance a rough prompt idea into a system prompt")
-    p_enh.add_argument("seed", nargs="?", help="Rough prompt idea (or '-' for stdin)")
-    p_enh.add_argument("--file", "-f", help="Read seed from file")
-    p_enh.add_argument("--profile", "-p", choices=ENHANCEMENT_PROFILES, help="Enhancement style")
-    p_enh.add_argument("--json", action="store_true", help="JSON output for agent consumption")
-    p_enh.add_argument("--no-store", action="store_true", help="Skip saving to analytics store")
+    # persona (new name for enhance — 7-section system prompts)
+    p_pers = sub.add_parser("persona", help="Generate a 7-section persistent system prompt",
+                           aliases=["enhance"])  # backward compat
+    p_pers.add_argument("seed", nargs="?", help="Rough persona idea (or '-' for stdin)")
+    p_pers.add_argument("--file", "-f", help="Read seed from file")
+    p_pers.add_argument("--profile", "-p", choices=PROFILES, help="Enhancement style")
+    p_pers.add_argument("--project", default=str(Path.cwd()), help="Project for context discovery")
+    p_pers.add_argument("--no-context", action="store_true", help="Skip workspace context")
+    p_pers.add_argument("--concise", action="store_true", help="Shorter output (1-2 bullets/section)")
+    p_pers.add_argument("--json", action="store_true", help="JSON output")
+    p_pers.add_argument("--no-store", action="store_true", help="Skip saving to store")
 
-    # install
-    p_inst = sub.add_parser("install", help="Install enhanced prompt into an agent's config")
-    p_inst.add_argument("seed", nargs="?", help="Rough prompt idea (or '-' for stdin)")
+    # enhance-task (new — inline task refinement, Auggie-style)
+    p_task = sub.add_parser("enhance-task", help="Inline task refinement (like Auggie Ctrl+P)")
+    p_task.add_argument("seed", nargs="?", help="Task description (or '-' for stdin)")
+    p_task.add_argument("--file", "-f", help="Read seed from file")
+    p_task.add_argument("--project", default=str(Path.cwd()), help="Project for context")
+    p_task.add_argument("--no-context", action="store_true")
+    p_task.add_argument("--json", action="store_true")
+    p_task.add_argument("--no-store", action="store_true")
+
+    # install (safe — with backup, --force, creates parent dirs)
+    p_inst = sub.add_parser("install", help="Install enhanced persona into agent config")
+    p_inst.add_argument("seed", nargs="?", help="Rough persona idea (or '-' for stdin)")
     p_inst.add_argument("--file", "-f", help="Read seed from file")
     p_inst.add_argument("--agent", "-a", required=True, choices=list(AGENT_CONFIGS.keys()) + ["all"], help="Target agent")
     p_inst.add_argument("--project", default=str(Path.cwd()), help="Project directory")
-    p_inst.add_argument("--profile", "-p", choices=ENHANCEMENT_PROFILES, help="Enhancement style")
-    p_inst.add_argument("--dry-run", action="store_true", help="Preview without writing")
-    p_inst.add_argument("--json", action="store_true", help="JSON output for agent consumption")
-    p_inst.add_argument("--no-store", action="store_true", help="Skip saving to analytics store")
+    p_inst.add_argument("--profile", "-p", choices=PROFILES)
+    p_inst.add_argument("--no-context", action="store_true")
+    p_inst.add_argument("--dry-run", action="store_true", help="Preview: no writes, no store")
+    p_inst.add_argument("--force", action="store_true", help="Overwrite without backup")
+    p_inst.add_argument("--json", action="store_true")
+    p_inst.add_argument("--no-store", action="store_true")
 
     # benchmark
     p_bench = sub.add_parser("benchmark", help="Score prompts on 7-dimension rubric")
     p_bench.add_argument("--before", help="Path to raw/before prompt")
     p_bench.add_argument("--after", help="Path to enhanced/after prompt")
-    p_bench.add_argument("--enhance", help="Enhance a seed and benchmark both (all-in-one)")
-    p_bench.add_argument("--json", action="store_true", help="JSON output")
+    p_bench.add_argument("--enhance", help="Enhance a seed and benchmark both")
+    p_bench.add_argument("--project", default=str(Path.cwd()))
+    p_bench.add_argument("--no-context", action="store_true")
+    p_bench.add_argument("--json", action="store_true")
 
     # store
     p_store = sub.add_parser("store", help="Analytics store commands")
     p_store_sub = p_store.add_subparsers(dest="store_action")
-    p_store_list = p_store_sub.add_parser("list", help="List recent enhancements")
+    p_store_list = p_store_sub.add_parser("list")
     p_store_list.add_argument("--limit", type=int, default=20)
     p_store_list.add_argument("--json", action="store_true")
-    p_store_stats = p_store_sub.add_parser("stats", help="Show analytics")
-    p_store_search = p_store_sub.add_parser("search", help="Search by keyword")
+    p_store_sub.add_parser("stats")
+    p_store_search = p_store_sub.add_parser("search")
     p_store_search.add_argument("query")
     p_store_search.add_argument("--json", action="store_true")
-    p_store_show = p_store_sub.add_parser("show", help="Show a specific record")
+    p_store_show = p_store_sub.add_parser("show")
     p_store_show.add_argument("id")
-    p_store_export = p_store_sub.add_parser("export", help="Export records")
+    p_store_delete = p_store_sub.add_parser("delete", help="Delete a specific record")
+    p_store_delete.add_argument("id")
+    p_store_sub.add_parser("clear", help="Clear all stored data")
+    p_store_export = p_store_sub.add_parser("export")
     p_store_export.add_argument("--format", choices=["json", "csv"], default="json")
+
+    # doctor
+    sub.add_parser("doctor", help="Health check")
 
     # version
     sub.add_parser("version", help="Show version")
 
     args = parser.parse_args()
 
-    if args.command == "enhance":
-        cmd_enhance(args)
+    if args.command in ("persona", "enhance"):
+        cmd_persona(args)
+    elif args.command == "enhance-task":
+        cmd_enhance_task(args)
     elif args.command == "install":
         cmd_install(args)
     elif args.command == "benchmark":
         cmd_benchmark(args)
     elif args.command == "store":
-        if not args.store_action:
-            parser.parse_args(["store", "--help"])
-        else:
-            cmd_store(args)
+        cmd_store(args)
+    elif args.command == "doctor":
+        cmd_doctor(args)
     elif args.command == "version":
-        print("prompt-enhancer 1.0.0")
+        print(f"prompt-enhancer {VERSION}")
     else:
         parser.print_help()
 

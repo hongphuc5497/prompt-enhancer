@@ -1,158 +1,116 @@
 # <img src="docs/logo.svg" alt="pe" height="60"> Prompt Enhancer
 
 <p align="center">
-  <strong>Compile rough intent into agent-ready system prompts.</strong><br>
-  <sub>Reverse-engineered from Auggie's Ctrl+P. Validated against the real Auggie CLI.</sub>
+  <strong>Generate reusable 7-section agent system prompts from rough persona ideas.</strong><br>
+  <sub>With optional install helpers, benchmarking, and local history.</sub>
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/prompt-enhancer"><img src="https://img.shields.io/badge/pip-install-blue" alt="pip install"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
-  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.1.0-blue" alt="Version"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/dependencies-0-lightgrey" alt="Zero dependencies"></a>
 </p>
 
-Transform vague prompt ideas into production-quality system prompts for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Auggie, Copilot, Aider). The CLI is `pe` (short) and `prompt-enhancer` (long) — both are the same tool.
+Two CLI modes for two use cases:
+- **`pe persona`** — Generate persistent 7-section system prompts (for saving, sharing, installing into agent configs)
+- **`pe enhance-task`** — Inline task refinement with workspace context (like Auggie's Ctrl+P)
 
-## Demo
-
-```bash
-# Enhance a rough idea into a 7-section system prompt
-pe enhance "a senior Rust developer who prefers functional programming"
-
-# Benchmark before vs after
-pe benchmark --enhance "a Go backend dev who prefers simplicity"
-
-# Install directly into an agent's config
-pe install "a security reviewer" --agent claude --dry-run
-
-# View analytics
-pe store stats
-```
-
-### Before → After
-
-| Before (raw seed) | After (enhanced) |
-|---|---|
-| `"a senior React dev who likes clean code"` | 7-section system prompt with ROLE, CONTEXT, RULES, TECH, FORMAT, PITFALLS, EXAMPLES |
-| Score: **17/35** (needs-revision) | Score: **34/35** (production-ready) |
-
-> See [docs/demo.tape](docs/demo.tape) for the VHS terminal recording script.
+The CLI is `pe` (short) and `prompt-enhancer` (long). Both work identically.
 
 ## Install
 
 ```bash
-# pip (recommended)
 pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
-
-# Homebrew
-brew install hongphuc5497/tap/prompt-enhancer
-
-# Quick install script
-curl -fsSL https://raw.githubusercontent.com/hongphuc5497/prompt-enhancer/main/install.sh | sh
 ```
 
-Set your API key (once):
+Set your API key:
 ```bash
-echo 'LLM_API_KEY=*** > ~/.prompt-enhancer.env
+echo "LLM_API_KEY=*** > ~/.prompt-enhancer.env
 ```
 
-Any OpenAI-compatible API works (DeepSeek, OpenAI, OpenRouter, Groq, etc.).
+Config (`~/.prompt-enhancer.env`):
+```env
+LLM_API_KEY=***i...ps://api.deepseek.com
+LLM_MODEL=deepseek-chat
+```
+
+Any OpenAI-compatible API works: DeepSeek, OpenAI, OpenRouter, Together, Groq, etc.
 
 ## Quick start
 
 ```bash
-# Set API key (once)
-echo 'LLM_API_KEY=*** > ~/.prompt-enhancer.env
+# Generate a 7-section system prompt
+pe persona "a senior Rust developer who prefers functional programming"
 
-# Generate a system prompt
-pe enhance "a senior Rust developer who prefers functional style"
+# Inline task refinement (Auggie Ctrl+P style)
+pe enhance-task "fix the login bug in the auth module"
 
-# With enhancement profile
-pe enhance --profile architect "system design reviewer"
-
-# Install directly into an agent's config
+# Safe install into agent config (creates backup if exists)
 pe install "a security reviewer" --agent claude
 
 # Benchmark before vs after
 pe benchmark --enhance "a Go backend dev"
 
-# JSON output for AI agent consumption
-pe enhance "..." --json
+# Health check
+pe doctor
+
+# View analytics
+pe store stats
 ```
 
-## How it works
+## Two modes
 
-```
-rough idea: "a senior React dev who likes clean code"
-     │
-     ▼
-┌─────────────────┐
-│ Workspace Context│  ← AGENTS.md, CLAUDE.md, package.json auto-discovered
-│ (Auggie pattern) │
-└────────┬────────┘
-     │
-     ▼
-┌─────────────────┐
-│  Enhancement     │  ← LLM transformation into 7-section structure
-│  Engine (LLM)    │     ROLE → CONTEXT → RULES → TECH → FORMAT → PITFALLS → EXAMPLES
-└────────┬────────┘
-     │
-     ▼
-production system prompt (ready to paste into agent config)
-```
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `pe persona` | Generate persistent system prompt | 7 sections: ROLE, CONTEXT, RULES, TECH, FORMAT, PITFALLS, EXAMPLES |
+| `pe enhance-task` | Inline task refinement | 3-5 sentence focused task prompt with workspace context |
 
-## What it generates
+Both modes auto-discover workspace context (`AGENTS.md`, `CLAUDE.md`, `package.json`, `Cargo.toml`, etc.) from the current project.
 
-Every enhanced prompt includes 7 sections + a pro tip:
+## What `pe persona` generates
 
-1. **ROLE** — Specific identity (not vague "helpful assistant")
-2. **CONTEXT** — Project/team specifics from workspace files
-3. **BEHAVIORAL RULES** — Communication style, decision-making, guardrails
-4. **TECHNICAL GUIDELINES** — Testing, code style, architecture patterns
-5. **OUTPUT FORMAT** — Code blocks, explanation style, structure
-6. **PITFALLS / GUARDRAILS** — Anti-patterns and security warnings
-7. **EXAMPLES** — 1-2 realistic interactions showing desired behavior
+1. **ROLE** — Specific, well-scoped identity
+2. **CONTEXT** — Project specs from workspace files
+3. **BEHAVIORAL RULES** — Communication style, decision-making
+4. **TECHNICAL GUIDELINES** — Testing, code style, architecture
+5. **OUTPUT FORMAT** — Code blocks, explanation style
+6. **PITFALLS / GUARDRAILS** — Anti-patterns, security warnings
+7. **EXAMPLES** — 1-2 realistic interactions
+
+Plus a "pro tip".
 
 ## Benchmark
 
-Built-in 7-dimension rubric scoring (SurePrompts): Role Clarity, Context Sufficiency, Instruction Specificity, Format Structure, Example Quality, Constraint Tightness, Output Validation. Each scored 1–5, max 35.
+7-dimension rubric scoring (SurePrompts): Role Clarity, Context Sufficiency, Instruction Specificity, Format Structure, Example Quality, Constraint Tightness, Output Validation. Each scored 1–5, max 35.
 
-```
+```bash
 pe benchmark --before raw.txt --after enhanced.md
+pe benchmark --enhance "a Go backend dev"   # all-in-one
 ```
 
-```
-════════════════════════════════════════════════════════════
-  PROMPT QUALITY BENCHMARK
-════════════════════════════════════════════════════════════
+| Score | Verdict |
+|-------|---------|
+| 28-35 | Production-ready |
+| 21-27 | Working draft |
+| 14-20 | Needs major revision |
+| 7-13 | Rewrite from scratch |
 
-  BEFORE:  17/35  (needs-revision)
-  AFTER:   34/35  (production-ready)
-  DELTA:   ↑17 points (+100%)
+## Comparison with Auggie
 
-  Dimension                     BEFORE   AFTER     Δ
-  ---------------------------- ------- ------- -----
-  Role Clarity                       4       5    +1
-  Context Sufficiency                2       5    +3
-  Instruction Specificity            1       5    +4
-  Format Structure                   1       5    +4
-  Example Quality                    5       5     0
-  Constraint Tightness               3       5    +2
-  Output Validation                  1       4    +3
-```
+Both this tool and Auggie's native `--enhance-prompt` have their strengths:
 
-## Verified vs Auggie
+| | `pe persona` | `pe enhance-task` | Auggie `--enhance-prompt` |
+|---|---|---|---|
+| **Best for** | Persistent system prompts | Inline task refinement | Inline task refinement |
+| **Output** | 7-section document | 3-5 sentences | 1-3 sentences |
+| **Workspace aware** | Yes (auto-discovers context) | Yes | Yes (native) |
+| **Installable** | Yes (`pe install`) | No | No |
+| **Reusable** | Save, share, version | Session-scoped | Session-scoped |
+| **Benchmark** | Built-in rubric | No | No |
+| **Analytics** | Auto-store | Auto-store | No |
 
-Tested against the real Auggie CLI (`--enhance-prompt` flag, not Antigravity `agy`):
-
-| | Before | After | Delta | Verdict |
-|---|---|---|---|---|
-| **Auggie native** | 9/35 | 17/35 | +89% | needs-revision |
-| **Prompt Enhancer** | 12/35 | 32/35 | +167% | **production-ready** |
-
-Auggie's enhancer produces a 1-sentence inline refinement. Our tool generates a 7-section, team-reusable system prompt. In agent behavior tests, enhanced prompts reduced wasted tool calls by 4.8× (43→9).
+They are complementary tools, not competitors.
 
 ## Profiles
 
@@ -169,15 +127,17 @@ Auggie's enhancer produces a 1-sentence inline refinement. Our tool generates a 
 
 ```bash
 pe install "a Rust dev..." --agent claude    # → CLAUDE.md
-pe install "..." --agent codex               # → .github/copilot-instructions.md
+pe install "..." --agent codex               # → .codex/system.md
 pe install "..." --agent cursor              # → .cursorrules
 pe install "..." --agent all                 # → all compatible configs
 ```
 
+Safe by default — creates `.bak` backup of existing files. Use `--force` to skip backup, `--dry-run` to preview.
+
 | Agent | Config file | Auto-loaded? |
 |-------|------------|:---:|
 | **Claude Code** | `CLAUDE.md` | ✅ |
-| **Codex** | `.github/copilot-instructions.md` | ✅ |
+| **Codex** | `.codex/system.md` | ✅ |
 | **OpenCode** | `AGENTS.md` | ✅ |
 | **Cursor** | `.cursorrules` | ✅ |
 | **Auggie** | `AGENTS.md` | ✅ |
@@ -186,30 +146,35 @@ pe install "..." --agent all                 # → all compatible configs
 
 ## Analytics store
 
-Every enhancement is automatically logged to `~/.prompt-enhancer/store.jsonl`:
+Every enhancement is auto-logged to `~/.prompt-enhancer/store.jsonl`:
 
 ```bash
 pe store list              # Recent enhancements
 pe store stats             # Analytics
 pe store search "rust"     # Search by keyword
-pe store export --format csv  # Export data
+pe store show <id>         # Detailed view
+pe store delete <id>       # Remove a record
+pe store clear             # Wipe all data
+pe store export --format csv  # Export for analysis
 ```
 
-Each record: `id`, `timestamp`, `seed`, `enhanced`, benchmark scores, agent, model, duration.
+First run shows a privacy notice. Use `--no-store` to opt out.
+
+## Demo
+
+See [docs/demo.tape](docs/demo.tape) for the VHS terminal recording script.
 
 ## Config
 
 ```env
 # ~/.prompt-enhancer.env
-LLM_API_KEY=***LLM_BASE_URL=https://api.deepseek.com   # Default
-LLM_MODEL=deepseek-chat              # Default
+LLM_API_KEY=***i...ps://api.deepseek.com   # Default
+LLM_MODEL=deepseek-chat                    # Default
 ```
-
-Any OpenAI-compatible API works: DeepSeek, OpenAI, OpenRouter, Together, Groq.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome.
 
 ## License
 
