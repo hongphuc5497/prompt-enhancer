@@ -119,3 +119,74 @@ The Auggie CLI's Prompt Enhancer (Ctrl+P) works by:
 3. Replacing input with structured, context-aware prompt
 
 Source: https://docs.augmentcode.com/cli/interactive/prompt-enhancer
+
+## Benchmarking: prompt-benchmark
+
+Measure prompt quality before and after enhancement using the **SurePrompts 7-Dimension Rubric** (LLM-as-judge). Each dimension is scored 1–5, max 35.
+
+### Dimensions
+| # | Dimension | What it measures |
+|---|-----------|-----------------|
+| 1 | Role Clarity | Specific, coherent role with scope and voice |
+| 2 | Context Sufficiency | All background, constraints, domain knowledge |
+| 3 | Instruction Specificity | Task, sub-tasks, success criteria |
+| 4 | Format Structure | Expected output format (schema, tone, length) |
+| 5 | Example Quality | Few-shot examples covering diverse cases |
+| 6 | Constraint Tightness | Must NOT do, length limits, banned patterns |
+| 7 | Output Validation | Validation plan (schema, checklist, tests) |
+
+### Score interpretation
+| Range | Verdict |
+|-------|---------|
+| 28–35 | Production-ready |
+| 21–27 | Working draft |
+| 14–20 | Needs major revision |
+| 7–13 | Rewrite from scratch |
+
+### Usage
+
+```bash
+# Score a single prompt
+python3 prompt-benchmark.py --prompt my-prompt.md
+
+# Compare before vs after
+python3 prompt-benchmark.py --before raw-idea.txt --after enhanced.md
+
+# Full pipeline: enhance + benchmark in one shot
+python3 prompt-benchmark.py --enhance "a Rust dev who prefers functional style"
+
+# JSON output
+python3 prompt-benchmark.py --before raw.txt --after enhanced.md --json
+
+# Dynamic: run against test cases, compare output quality
+python3 prompt-benchmark.py --before raw.txt --after enhanced.md --execute --tests test_cases.json
+```
+
+### Example output
+```
+════════════════════════════════════════════════════════════
+  PROMPT QUALITY BENCHMARK — SurePrompts 7-Dimension Rubric
+════════════════════════════════════════════════════════════
+
+  BEFORE:  17/35  (needs-revision)
+  AFTER:   34/35  (production-ready)
+  DELTA:   ↑17 points (+100%)
+
+  Dimension                     BEFORE   AFTER     Δ
+  ---------------------------- ------- ------- -----
+  Role Clarity                       4       5    +1
+  Context Sufficiency                2       5    +3
+  Instruction Specificity            1       5    +4
+  Format Structure                   1       5    +4
+  Example Quality                    5       5     0
+  Constraint Tightness               3       5    +2
+  Output Validation                  1       4    +3
+```
+
+### How the benchmark works
+
+1. **Static analysis** (default): An LLM judge reads the prompt text and scores each dimension on the rubric — no execution needed. This is like `promptfoo`'s quality assertions but focused on prompt structure, not outputs.
+
+2. **Dynamic analysis** (`--execute`): Runs both prompts against real test cases, then a second LLM judge scores the outputs on task completion, code quality, structure, and contextual fit. This is the A/B testing equivalent for prompts.
+
+The judge model (configurable via `JUDGE_MODEL` env var) uses `temperature=0.3` for consistent, repeatable scoring.
