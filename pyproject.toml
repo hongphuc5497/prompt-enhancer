@@ -1,0 +1,23 @@
+[project]
+name = "prompt-enhancer"
+version = "1.0.0"
+description = "Reverse-engineered from Auggie's Ctrl+P — transforms rough ideas into production system prompts for AI coding agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hongphuc5497" }]
+keywords = ["prompt-engineering", "ai", "llm", "claude-code", "codex", "cursor", "auggie"]
+
+[project.scripts]
+prompt-enhancer = "prompt_enhancer.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/hongphuc5497/prompt-enhancer"
+Repository = "https://github.com/hongphuc5497/prompt-enhancer.git"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
