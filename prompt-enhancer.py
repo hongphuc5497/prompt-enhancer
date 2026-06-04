@@ -76,13 +76,16 @@ def collect_context(context_paths, auto_discover=True):
             ".github/copilot-instructions.md",
         ]
         for pattern in discover_patterns:
-            for found in cwd.rglob(pattern):
-                if str(found) not in seen and found.is_file():
-                    seen.add(str(found))
-                    content = found.read_text()
-                    if len(content) > 3000:
-                        content = content[:3000] + "\n... (truncated)"
-                    context.append(f"### {found.name} ({found})\n```\n{content}\n```")
+            try:
+                for found in cwd.rglob(pattern):
+                    if str(found) not in seen and found.is_file():
+                        seen.add(str(found))
+                        content = found.read_text()
+                        if len(content) > 3000:
+                            content = content[:3000] + "\n... (truncated)"
+                        context.append(f"### {found.name} ({found})\n```\n{content}\n```")
+            except (PermissionError, OSError, InterruptedError):
+                pass  # skip restricted directories
 
         # Also grab key tech stack signals
         for signal_file in ["package.json", "Cargo.toml", "pyproject.toml", "go.mod"]:
