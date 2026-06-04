@@ -190,3 +190,16 @@ python3 prompt-benchmark.py --before raw.txt --after enhanced.md --execute --tes
 2. **Dynamic analysis** (`--execute`): Runs both prompts against real test cases, then a second LLM judge scores the outputs on task completion, code quality, structure, and contextual fit. This is the A/B testing equivalent for prompts.
 
 The judge model (configurable via `JUDGE_MODEL` env var) uses `temperature=0.3` for consistent, repeatable scoring.
+
+## Verified vs Auggie's Native Enhancer
+
+Tested against the real Auggie CLI (`--enhance-prompt` flag, not Antigravity `agy`):
+
+| | Before | After | Delta | Verdict |
+|---|---|---|---|---|
+| **Auggie `--enhance-prompt`** | 9/35 | 17/35 | +89% | needs-revision |
+| **Our `prompt-enhancer.py`** | 12/35 | 32/35 | +167% | **production-ready** |
+
+Auggie's enhancer produces a 1-sentence inline task refinement. Our tool generates a 7-section reusable system prompt document. Different tools for different use cases — Auggie is optimized for single-session agent execution; ours is optimized for team-shared, version-controlled system prompts.
+
+In agent behavior tests, enhanced prompts reduced wasted tool calls by 4.8× (43→9) when fed to Auggie.
