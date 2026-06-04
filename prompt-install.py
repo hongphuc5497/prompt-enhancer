@@ -19,6 +19,7 @@ Supported agents:
 """
 
 import os
+import json
 import sys
 import subprocess
 import argparse
@@ -111,6 +112,23 @@ def install(prompt_text: str, agent: str, project_dir: str, dry_run: bool = Fals
     print(f"   {config['description']}")
 
 
+def save_to_store(seed: str, enhanced: str, agent: str, project: str, profile: str = None):
+    """Auto-save this enhancement to the JSON store."""
+    store_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt-store.py")
+    if not os.path.exists(store_script):
+        return  # store not available
+    subprocess.run(
+        [PYTHON, store_script, "save",
+         "--seed", seed[:500],
+         "--enhanced", enhanced[:5000],
+         "--agent", agent,
+         "--project", project,
+         "--profile", profile or "",
+         "--quiet"],
+        capture_output=True, timeout=10
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Install an enhanced system prompt into any AI coding agent's config"
@@ -122,8 +140,14 @@ def main():
                        help="Target agent (or 'all' for every compatible config)")
     parser.add_argument("--project", "-p", default=os.getcwd(),
                        help="Project directory (default: current dir)")
+    parser.add_argument("--profile", choices=["senior-dev", "architect", "reviewer", "sre", "product", "mentor"],
+                       help="Enhancement profile")
     parser.add_argument("--dry-run", action="store_true",
                        help="Show what would be written without writing")
+    parser.add_argument("--json", action="store_true",
+                       help="Output JSON for agent consumption")
+    parser.add_argument("--no-store", action="store_true",
+                       help="Skip saving to the analytics store")
     parser.add_argument("--keep", action="store_true",
                        help="Keep raw enhanced output (don't strip stderr prefix)")
     args = parser.parse_args()
@@ -141,21 +165,45 @@ def main():
     else:
         parser.error("Provide a seed prompt or --file")
 
+    t0 = __import__('time').time()
+
     # Enhance
-    print(f"Enhancing: {seed[:60]}...", file=sys.stderr)
+    if not args.json:
+        print(f"Enhancing: {seed[:60]}...", file=sys.stderr)
     enhanced = enhance(seed, is_file)
+    duration_ms = int((__import__('time').time() - t0) * 1000)
 
     # Strip "Enhancing with..." line from prompt-enhancer stderr
     if not args.keep:
         if "\n" in enhanced and enhanced.startswith("Enhancing"):
             enhanced = enhanced.split("\n", 1)[1] if "\n" in enhanced else enhanced
 
+    # --json output mode (for AI agent consumption)
+    if args.json:
+        result = {
+            "status": "ok",
+            "seed": seed[:200],
+            "enhanced": enhanced,
+            "agent": args.agent,
+            "project": args.project,
+            "duration_ms": duration_ms,
+        }
+        print(json.dumps(result, ensure_ascii=False))
+        # Still save to store
+        if not args.no_store:
+            save_to_store(seed, enhanced, args.agent, args.project, args.profile)
+        return
+
     # Install to agent(s)
     agents = list(AGENT_CONFIGS.keys()) if args.agent == "all" else [args.agent]
     for agent in agents:
         if args.agent == "all" and agent == "aider":
-            continue  # skip aider in 'all' mode (prints, doesn't write)
+            continue
         install(enhanced, agent, args.project, args.dry_run)
+
+    # Save to analytics store
+    if not args.no_store and not args.dry_run:
+        save_to_store(seed, enhanced, args.agent, args.project, args.profile)
 
 
 if __name__ == "__main__":
