@@ -236,3 +236,37 @@ python3 prompt-install.py "a terse reviewer" --agent codex --dry-run
 | **Auggie** | `AGENTS.md` | ✅ |
 | **Copilot** | `.github/copilot-instructions.md` | ✅ |
 | **Aider** | `.aider-persona.md` | `--system-prompt` flag |
+
+## Analytics Store
+
+Every enhancement is automatically logged to `~/.prompt-enhancer/store.jsonl` for data analytics:
+
+```bash
+# List recent enhancements
+python3 prompt-store.py list
+
+# Show stats across all enhancements
+python3 prompt-store.py stats
+
+# Search by keyword
+python3 prompt-store.py search "security reviewer"
+
+# Export filtered data
+python3 prompt-store.py export --agent claude --format csv -o report.csv
+
+# Show a specific record
+python3 prompt-store.py show <id>
+```
+
+### JSON output for AI agents
+
+```bash
+# Structured JSON for programmatic consumption
+python3 prompt-install.py "a Go dev..." --agent claude --json
+
+# {"status": "ok", "seed": "...", "enhanced": "...# System Prompt...", ...}
+```
+
+### Data model
+
+Each record stores: `id`, `timestamp`, `seed`, `enhanced`, `agent`, `project`, `profile`, `benchmark` scores (before/after), `model`, `duration_ms`.
