@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320">
+  <defs>
+    <linearGradient id="prism" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#37E8FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7CFF9B;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0B0F14" />
+      <stop offset="100%" style="stop-color:#161B22" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="320" rx="16" fill="url(#bg)" />
+
+  <!-- Logo mark: terminal prompt → prism → 7 structured lines -->
+  <!-- Terminal prompt ">" -->
+  <text x="60" y="175" font-family="JetBrains Mono, monospace" font-size="48" fill="#37E8FF" font-weight="bold">></text>
+
+  <!-- Prism / folding bracket in middle -->
+  <polygon points="140,130 180,160 140,190" fill="none" stroke="#8B5CF6" stroke-width="3" opacity="0.6"/>
+
+  <!-- 7 horizontal lines representing the 7 output sections -->
+  <g opacity="0.9">
+    <rect x="210" y="125" width="180" height="6" rx="3" fill="#37E8FF" opacity="0.5"/>
+    <rect x="210" y="138" width="220" height="6" rx="3" fill="#37E8FF" opacity="0.6"/>
+    <rect x="210" y="151" width="195" height="6" rx="3" fill="#8B5CF6" opacity="0.7"/>
+    <rect x="210" y="164" width="230" height="6" rx="3" fill="#8B5CF6" opacity="0.8"/>
+    <rect x="210" y="177" width="200" height="6" rx="3" fill="#7CFF9B" opacity="0.7"/>
+    <rect x="210" y="190" width="215" height="6" rx="3" fill="#7CFF9B" opacity="0.6"/>
+    <rect x="210" y="203" width="185" height="6" rx="3" fill="#37E8FF" opacity="0.5"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="60" y="270" font-family="Outfit, Inter, sans-serif" font-size="60" fill="#E6EDF3" font-weight="700" letter-spacing="-1">
+    <tspan font-weight="800" fill="#37E8FF">pe</tspan><tspan fill="#8B949E" font-weight="400" font-size="24">rompt </tspan><tspan font-weight="800">enhancer</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="60" y="295" font-family="Outfit, Inter, sans-serif" font-size="13" fill="#8B949E" letter-spacing="0.5">
+    Compile rough intent into agent-ready system prompts.
+  </text>
+
+  <!-- Small version mark for GitHub header -->
+  <text x="60" y="60" font-family="JetBrains Mono, monospace" font-size="12" fill="#8B949E" opacity="0.4">
+    pe enhance "a senior Rust developer..."
+  </text>
+  <text x="60" y="80" font-family="JetBrains Mono, monospace" font-size="10" fill="#37E8FF" opacity="0.3">
+    → ROLE → CONTEXT → RULES → TECH → FORMAT → PITFALLS → EXAMPLES
+  </text>
+</svg>

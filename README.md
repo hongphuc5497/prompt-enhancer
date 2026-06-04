@@ -1,18 +1,44 @@
-# Prompt Enhancer
+# <img src="docs/logo.svg" alt="pe" height="60"> Prompt Enhancer
 
 <p align="center">
-  <strong>Reverse-engineered from Auggie's Ctrl+P — rough ideas → production system prompts</strong>
+  <strong>Compile rough intent into agent-ready system prompts.</strong><br>
+  <sub>Reverse-engineered from Auggie's Ctrl+P. Validated against the real Auggie CLI.</sub>
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/prompt-enhancer"><img src="https://img.shields.io/badge/pip-install-blue" alt="pip install"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
-  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.0.1-blue" alt="Version"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.1.0-blue" alt="Version"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/dependencies-0-lightgrey" alt="Zero dependencies"></a>
 </p>
 
-Transform vague prompt ideas into production-quality system prompts for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Auggie, Copilot, Aider). Reverse-engineered from Auggie's Ctrl+P Prompt Enhancer and validated against the real Auggie CLI.
+Transform vague prompt ideas into production-quality system prompts for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Auggie, Copilot, Aider). The CLI is `pe` (short) and `prompt-enhancer` (long) — both are the same tool.
+
+## Demo
+
+```bash
+# Enhance a rough idea into a 7-section system prompt
+pe enhance "a senior Rust developer who prefers functional programming"
+
+# Benchmark before vs after
+pe benchmark --enhance "a Go backend dev who prefers simplicity"
+
+# Install directly into an agent's config
+pe install "a security reviewer" --agent claude --dry-run
+
+# View analytics
+pe store stats
+```
+
+### Before → After
+
+| Before (raw seed) | After (enhanced) |
+|---|---|
+| `"a senior React dev who likes clean code"` | 7-section system prompt with ROLE, CONTEXT, RULES, TECH, FORMAT, PITFALLS, EXAMPLES |
+| Score: **17/35** (needs-revision) | Score: **34/35** (production-ready) |
+
+> See [docs/demo.tape](docs/demo.tape) for the VHS terminal recording script.
 
 ## Install
 
@@ -37,20 +63,23 @@ Any OpenAI-compatible API works (DeepSeek, OpenAI, OpenRouter, Groq, etc.).
 ## Quick start
 
 ```bash
+# Set API key (once)
+echo 'LLM_API_KEY=*** > ~/.prompt-enhancer.env
+
 # Generate a system prompt
-prompt-enhancer enhance "a senior Rust developer who prefers functional style"
+pe enhance "a senior Rust developer who prefers functional style"
 
 # With enhancement profile
-prompt-enhancer enhance --profile architect "system design reviewer"
+pe enhance --profile architect "system design reviewer"
 
 # Install directly into an agent's config
-prompt-enhancer install "a security reviewer" --agent claude
+pe install "a security reviewer" --agent claude
 
 # Benchmark before vs after
-prompt-enhancer benchmark --enhance "a Go backend dev"
+pe benchmark --enhance "a Go backend dev"
 
 # JSON output for AI agent consumption
-prompt-enhancer enhance "..." --json
+pe enhance "..." --json
 ```
 
 ## How it works
@@ -91,7 +120,7 @@ Every enhanced prompt includes 7 sections + a pro tip:
 Built-in 7-dimension rubric scoring (SurePrompts): Role Clarity, Context Sufficiency, Instruction Specificity, Format Structure, Example Quality, Constraint Tightness, Output Validation. Each scored 1–5, max 35.
 
 ```
-prompt-enhancer benchmark --before raw.txt --after enhanced.md
+pe benchmark --before raw.txt --after enhanced.md
 ```
 
 ```
@@ -139,10 +168,10 @@ Auggie's enhancer produces a 1-sentence inline refinement. Our tool generates a 
 ## Agent integration
 
 ```bash
-prompt-enhancer install "a Rust dev..." --agent claude    # → CLAUDE.md
-prompt-enhancer install "..." --agent codex               # → .github/copilot-instructions.md
-prompt-enhancer install "..." --agent cursor              # → .cursorrules
-prompt-enhancer install "..." --agent all                 # → all compatible configs
+pe install "a Rust dev..." --agent claude    # → CLAUDE.md
+pe install "..." --agent codex               # → .github/copilot-instructions.md
+pe install "..." --agent cursor              # → .cursorrules
+pe install "..." --agent all                 # → all compatible configs
 ```
 
 | Agent | Config file | Auto-loaded? |
@@ -160,10 +189,10 @@ prompt-enhancer install "..." --agent all                 # → all compatible c
 Every enhancement is automatically logged to `~/.prompt-enhancer/store.jsonl`:
 
 ```bash
-prompt-enhancer store list              # Recent enhancements
-prompt-enhancer store stats             # Analytics
-prompt-enhancer store search "rust"     # Search by keyword
-prompt-enhancer store export --format csv  # Export data
+pe store list              # Recent enhancements
+pe store stats             # Analytics
+pe store search "rust"     # Search by keyword
+pe store export --format csv  # Export data
 ```
 
 Each record: `id`, `timestamp`, `seed`, `enhanced`, benchmark scores, agent, model, duration.

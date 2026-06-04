@@ -1,2 +1,3 @@
 [console_scripts]
+pe = prompt_enhancer.cli:main
 prompt-enhancer = prompt_enhancer.cli:main

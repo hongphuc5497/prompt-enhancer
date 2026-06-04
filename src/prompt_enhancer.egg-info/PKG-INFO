@@ -1,18 +1,79 @@
 Metadata-Version: 2.4
 Name: prompt-enhancer
-Version: 1.0.0
+Version: 1.0.1
 Summary: Reverse-engineered from Auggie's Ctrl+P — transforms rough ideas into production system prompts for AI coding agents
-Author: hongphuc5497
+Author-email: hongphuc5497 <hongphuc.dthp@gmail.com>
 License: MIT
 Project-URL: Homepage, https://github.com/hongphuc5497/prompt-enhancer
 Project-URL: Repository, https://github.com/hongphuc5497/prompt-enhancer.git
-Keywords: prompt-engineering,ai,llm,claude-code,codex,cursor,auggie
+Keywords: prompt-engineering,ai,llm,claude-code,codex,cursor,auggie,system-prompt,agent
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: license-file
 
 # Prompt Enhancer
 
-Reverse-engineered from Auggie's Ctrl+P Prompt Enhancer. Takes a rough idea and transforms it into a production-quality system prompt for AI coding agents (Claude Code, Codex, Cursor, Hermes, Copilot).
+<p align="center">
+  <strong>Reverse-engineered from Auggie's Ctrl+P — rough ideas → production system prompts</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/prompt-enhancer"><img src="https://img.shields.io/badge/pip-install-blue" alt="pip install"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.0.1-blue" alt="Version"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/dependencies-0-lightgrey" alt="Zero dependencies"></a>
+</p>
+
+Transform vague prompt ideas into production-quality system prompts for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Auggie, Copilot, Aider). Reverse-engineered from Auggie's Ctrl+P Prompt Enhancer and validated against the real Auggie CLI.
+
+## Install
+
+```bash
+# pip (recommended)
+pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
+
+# Homebrew
+brew install hongphuc5497/tap/prompt-enhancer
+
+# Quick install script
+curl -fsSL https://raw.githubusercontent.com/hongphuc5497/prompt-enhancer/main/install.sh | sh
+```
+
+Set your API key (once):
+```bash
+echo 'LLM_API_KEY=*** > ~/.prompt-enhancer.env
+```
+
+Any OpenAI-compatible API works (DeepSeek, OpenAI, OpenRouter, Groq, etc.).
+
+## Quick start
+
+```bash
+# Generate a system prompt
+prompt-enhancer enhance "a senior Rust developer who prefers functional style"
+
+# With enhancement profile
+prompt-enhancer enhance --profile architect "system design reviewer"
+
+# Install directly into an agent's config
+prompt-enhancer install "a security reviewer" --agent claude
+
+# Benchmark before vs after
+prompt-enhancer benchmark --enhance "a Go backend dev"
+
+# JSON output for AI agent consumption
+prompt-enhancer enhance "..." --json
+```
 
 ## How it works
 
@@ -27,7 +88,7 @@ rough idea: "a senior React dev who likes clean code"
      │
      ▼
 ┌─────────────────┐
-│  Enhancement     │  ← LLM transformation with 7-section structure
+│  Enhancement     │  ← LLM transformation into 7-section structure
 │  Engine (LLM)    │     ROLE → CONTEXT → RULES → TECH → FORMAT → PITFALLS → EXAMPLES
 └────────┬────────┘
      │
@@ -35,71 +96,9 @@ rough idea: "a senior React dev who likes clean code"
 production system prompt (ready to paste into agent config)
 ```
 
-Key Auggie patterns replicated:
-- **Workspace awareness**: Auto-discovers AGENTS.md, CLAUDE.md, package.json, etc.
-- **Structure injection**: Adds file references, conventions, and patterns from context
-- **Profile system**: Pre-set enhancement styles (senior-dev, architect, reviewer, SRE, product, mentor)
-
-## Quick start
-
-```bash
-# Set API key (once)
-echo 'LLM_API_KEY=sk-xxx' > ~/.prompt-enhancer.env
-
-# Generate a system prompt
-python3 prompt-enhancer.py "a senior Rust developer who prefers functional style"
-
-# With workspace context auto-discovery
-cd ~/repos/myproject
-python3 prompt-enhancer.py "a code reviewer who focuses on security"
-
-# From a file
-python3 prompt-enhancer.py --file rough-idea.md
-
-# With enhancement profile
-python3 prompt-enhancer.py --profile architect "system design reviewer"
-
-# Pipe
-echo "a terse SRE who hates alerts" | python3 prompt-enhancer.py
-```
-
-## Options
-
-| Flag | Description |
-|------|-------------|
-| `seed` | The rough prompt idea (positional arg) |
-| `--file`, `-f` | Read seed from file |
-| `--context`, `-c` | Explicit context file paths |
-| `--no-auto-context` | Disable auto-discovery of AGENTS.md |
-| `--profile`, `-p` | Enhancement style: `senior-dev`, `architect`, `reviewer`, `sre`, `product`, `mentor` |
-| `--dry-run` | Show the enhancement prompt without calling LLM |
-
-## Profiles
-
-| Profile | Focus |
-|---------|-------|
-| `senior-dev` | Technical depth, testing, edge cases |
-| `architect` | System design, trade-offs, scalability |
-| `reviewer` | Security, performance, code smells |
-| `sre` | Observability, reliability, incident response |
-| `product` | User experience, feature prioritization |
-| `mentor` | Teaching, onboarding, pair-programming |
-
-## Architecture
-
-```
-prompt-enhancer.py          # CLI entry point
-├── collect_context()       # Auto-discovers AGENTS.md, CLAUDE.md, package.json
-├── build_enhancement_prompt()  # Constructs the LLM enhancement prompt
-├── call_llm()              # OpenAI-compatible API call (zero deps beyond stdlib)
-└── ENHANCEMENT_PROFILES    # Pre-set enhancement styles
-```
-
-Dependencies: **zero** (stdlib only: `json`, `os`, `sys`, `pathlib`, `urllib`, `argparse`)
-
 ## What it generates
 
-Every enhanced prompt includes 7 sections:
+Every enhanced prompt includes 7 sections + a pro tip:
 
 1. **ROLE** — Specific identity (not vague "helpful assistant")
 2. **CONTEXT** — Project/team specifics from workspace files
@@ -109,75 +108,17 @@ Every enhanced prompt includes 7 sections:
 6. **PITFALLS / GUARDRAILS** — Anti-patterns and security warnings
 7. **EXAMPLES** — 1-2 realistic interactions showing desired behavior
 
-Plus a "pro tip" — the single most impactful rule for that role.
+## Benchmark
 
-## Config
+Built-in 7-dimension rubric scoring (SurePrompts): Role Clarity, Context Sufficiency, Instruction Specificity, Format Structure, Example Quality, Constraint Tightness, Output Validation. Each scored 1–5, max 35.
 
-Set via environment variables or `~/.prompt-enhancer.env`:
-
-```env
-LLM_API_KEY=sk-xxx          # Required
-LLM_BASE_URL=https://api.deepseek.com  # Default
-LLM_MODEL=deepseek-chat     # Default
+```
+prompt-enhancer benchmark --before raw.txt --after enhanced.md
 ```
 
-Any OpenAI-compatible API works: DeepSeek, OpenRouter, OpenAI, Together, Groq, etc.
-
-## Reverse-engineered from Auggie
-
-The Auggie CLI's Prompt Enhancer (Ctrl+P) works by:
-1. Capturing user input + workspace context
-2. Sending to an enhancement service (LLM)
-3. Replacing input with structured, context-aware prompt
-
-Source: https://docs.augmentcode.com/cli/interactive/prompt-enhancer
-
-## Benchmarking: prompt-benchmark
-
-Measure prompt quality before and after enhancement using the **SurePrompts 7-Dimension Rubric** (LLM-as-judge). Each dimension is scored 1–5, max 35.
-
-### Dimensions
-| # | Dimension | What it measures |
-|---|-----------|-----------------|
-| 1 | Role Clarity | Specific, coherent role with scope and voice |
-| 2 | Context Sufficiency | All background, constraints, domain knowledge |
-| 3 | Instruction Specificity | Task, sub-tasks, success criteria |
-| 4 | Format Structure | Expected output format (schema, tone, length) |
-| 5 | Example Quality | Few-shot examples covering diverse cases |
-| 6 | Constraint Tightness | Must NOT do, length limits, banned patterns |
-| 7 | Output Validation | Validation plan (schema, checklist, tests) |
-
-### Score interpretation
-| Range | Verdict |
-|-------|---------|
-| 28–35 | Production-ready |
-| 21–27 | Working draft |
-| 14–20 | Needs major revision |
-| 7–13 | Rewrite from scratch |
-
-### Usage
-
-```bash
-# Score a single prompt
-python3 prompt-benchmark.py --prompt my-prompt.md
-
-# Compare before vs after
-python3 prompt-benchmark.py --before raw-idea.txt --after enhanced.md
-
-# Full pipeline: enhance + benchmark in one shot
-python3 prompt-benchmark.py --enhance "a Rust dev who prefers functional style"
-
-# JSON output
-python3 prompt-benchmark.py --before raw.txt --after enhanced.md --json
-
-# Dynamic: run against test cases, compare output quality
-python3 prompt-benchmark.py --before raw.txt --after enhanced.md --execute --tests test_cases.json
-```
-
-### Example output
 ```
 ════════════════════════════════════════════════════════════
-  PROMPT QUALITY BENCHMARK — SurePrompts 7-Dimension Rubric
+  PROMPT QUALITY BENCHMARK
 ════════════════════════════════════════════════════════════
 
   BEFORE:  17/35  (needs-revision)
@@ -195,49 +136,36 @@ python3 prompt-benchmark.py --before raw.txt --after enhanced.md --execute --tes
   Output Validation                  1       4    +3
 ```
 
-### How the benchmark works
-
-1. **Static analysis** (default): An LLM judge reads the prompt text and scores each dimension on the rubric — no execution needed. This is like `promptfoo`'s quality assertions but focused on prompt structure, not outputs.
-
-2. **Dynamic analysis** (`--execute`): Runs both prompts against real test cases, then a second LLM judge scores the outputs on task completion, code quality, structure, and contextual fit. This is the A/B testing equivalent for prompts.
-
-The judge model (configurable via `JUDGE_MODEL` env var) uses `temperature=0.3` for consistent, repeatable scoring.
-
-## Verified vs Auggie's Native Enhancer
+## Verified vs Auggie
 
 Tested against the real Auggie CLI (`--enhance-prompt` flag, not Antigravity `agy`):
 
 | | Before | After | Delta | Verdict |
 |---|---|---|---|---|
-| **Auggie `--enhance-prompt`** | 9/35 | 17/35 | +89% | needs-revision |
-| **Our `prompt-enhancer.py`** | 12/35 | 32/35 | +167% | **production-ready** |
+| **Auggie native** | 9/35 | 17/35 | +89% | needs-revision |
+| **Prompt Enhancer** | 12/35 | 32/35 | +167% | **production-ready** |
 
-Auggie's enhancer produces a 1-sentence inline task refinement. Our tool generates a 7-section reusable system prompt document. Different tools for different use cases — Auggie is optimized for single-session agent execution; ours is optimized for team-shared, version-controlled system prompts.
+Auggie's enhancer produces a 1-sentence inline refinement. Our tool generates a 7-section, team-reusable system prompt. In agent behavior tests, enhanced prompts reduced wasted tool calls by 4.8× (43→9).
 
-In agent behavior tests, enhanced prompts reduced wasted tool calls by 4.8× (43→9) when fed to Auggie.
+## Profiles
 
-## Installing into Coding Agents
+| Profile | Focus |
+|---------|-------|
+| `senior-dev` | Technical depth, testing, edge cases |
+| `architect` | System design, trade-offs, scalability |
+| `reviewer` | Security, performance, code smells |
+| `sre` | Observability, reliability, incident response |
+| `product` | User experience, feature prioritization |
+| `mentor` | Teaching, onboarding, pair-programming |
 
-Use `prompt-install.py` to pipe enhanced prompts directly into any agent's config:
+## Agent integration
 
 ```bash
-# Claude Code → CLAUDE.md (auto-loaded every session)
-python3 prompt-install.py "a senior Rust dev who prefers functional style" --agent claude
-
-# Codex → .github/copilot-instructions.md
-python3 prompt-install.py "a security reviewer" --agent codex
-
-# Cursor → .cursorrules
-python3 prompt-install.py "a full-stack developer" --agent cursor
-
-# All compatible agents at once
-python3 prompt-install.py "a Go backend dev..." --agent all
-
-# Dry-run (preview without writing)
-python3 prompt-install.py "a terse reviewer" --agent codex --dry-run
+prompt-enhancer install "a Rust dev..." --agent claude    # → CLAUDE.md
+prompt-enhancer install "..." --agent codex               # → .github/copilot-instructions.md
+prompt-enhancer install "..." --agent cursor              # → .cursorrules
+prompt-enhancer install "..." --agent all                 # → all compatible configs
 ```
-
-### Supported agents
 
 | Agent | Config file | Auto-loaded? |
 |-------|------------|:---:|
@@ -249,36 +177,33 @@ python3 prompt-install.py "a terse reviewer" --agent codex --dry-run
 | **Copilot** | `.github/copilot-instructions.md` | ✅ |
 | **Aider** | `.aider-persona.md` | `--system-prompt` flag |
 
-## Analytics Store
+## Analytics store
 
-Every enhancement is automatically logged to `~/.prompt-enhancer/store.jsonl` for data analytics:
-
-```bash
-# List recent enhancements
-python3 prompt-store.py list
-
-# Show stats across all enhancements
-python3 prompt-store.py stats
-
-# Search by keyword
-python3 prompt-store.py search "security reviewer"
-
-# Export filtered data
-python3 prompt-store.py export --agent claude --format csv -o report.csv
-
-# Show a specific record
-python3 prompt-store.py show <id>
-```
-
-### JSON output for AI agents
+Every enhancement is automatically logged to `~/.prompt-enhancer/store.jsonl`:
 
 ```bash
-# Structured JSON for programmatic consumption
-python3 prompt-install.py "a Go dev..." --agent claude --json
-
-# {"status": "ok", "seed": "...", "enhanced": "...# System Prompt...", ...}
+prompt-enhancer store list              # Recent enhancements
+prompt-enhancer store stats             # Analytics
+prompt-enhancer store search "rust"     # Search by keyword
+prompt-enhancer store export --format csv  # Export data
 ```
 
-### Data model
+Each record: `id`, `timestamp`, `seed`, `enhanced`, benchmark scores, agent, model, duration.
 
-Each record stores: `id`, `timestamp`, `seed`, `enhanced`, `agent`, `project`, `profile`, `benchmark` scores (before/after), `model`, `duration_ms`.
+## Config
+
+```env
+# ~/.prompt-enhancer.env
+LLM_API_KEY=***LLM_BASE_URL=https://api.deepseek.com   # Default
+LLM_MODEL=deepseek-chat              # Default
+```
+
+Any OpenAI-compatible API works: DeepSeek, OpenAI, OpenRouter, Together, Groq.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests welcome.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
