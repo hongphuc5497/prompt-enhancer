@@ -1,9 +1,9 @@
 [project]
 name = "prompt-enhancer"
-version = "1.1.0"
+version = "1.5.0"
 description = "Reverse-engineered from Auggie's Ctrl+P — transforms rough ideas into production system prompts for AI coding agents"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "hongphuc5497", email = "hongphuc.dthp@gmail.com" }]
 keywords = ["prompt-engineering", "ai", "llm", "claude-code", "codex", "cursor", "auggie", "system-prompt", "agent"]
@@ -13,7 +13,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]

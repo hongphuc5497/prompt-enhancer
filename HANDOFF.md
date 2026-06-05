@@ -2,9 +2,10 @@
 
 > **Tagline:** Compile rough intent into agent-ready system prompts.
 > **Repo:** https://github.com/hongphuc5497/prompt-enhancer
-> **Current version:** v1.4.1
-> **Tests:** 38 passing (stdlib `unittest`, zero deps)
+> **Current version:** v1.5.0
+> **Tests:** 50 passing (stdlib `unittest`, zero deps) — CI matrix on Py 3.12/3.13/3.14, Ubuntu+macOS
 > **Dependencies:** 0 (Python stdlib only)
+> **Python:** 3.12+ required (3.14 recommended)
 > **License:** MIT
 
 ---
@@ -23,11 +24,16 @@ Two enhancement modes:
 
 ```
 src/prompt_enhancer/
-├── cli.py           # Unified CLI: persona, enhance-task, install, benchmark, store, dashboard, doctor
+├── cli.py            # Unified CLI: persona, enhance-task, install, benchmark, store, dashboard, doctor, lint
 ├── view.py           # ANSI-styled rich prompt viewer + spinner progress indicator
 ├── dashboard.py      # Terminal analytics dashboard (sparklines, bar charts, panels)
-├── agents.py         # Agent delegation backends (claude, codex, auggie, opencode)
+├── agents.py         # Agent delegation backends (claude, codex, auggie, opencode) + blind-judge runner
+├── lint.py           # Static analysis of system prompts (no LLM)
 ├── __init__.py       # Version marker
+
+.github/workflows/
+├── ci.yml            # Matrix tests on 3.12/3.13/3.14, Ubuntu+macOS
+└── release.yml       # PyPI Trusted Publishing on tag push
 
 prompt-enhancer.py     # Legacy standalone enhancer (stdlib only)
 prompt-benchmark.py    # Legacy standalone benchmark
@@ -42,6 +48,8 @@ pe persona "a Rust dev..."              # 7-section system prompt
 pe enhance-task "fix the login bug"     # inline task refinement
 pe install "..." --agent claude         # safe install into agent config
 pe benchmark --enhance "a Go dev..."    # score before/after on 7-dim rubric
+pe benchmark --after p.md --judge-via claude   # blind judge via a different agent
+pe lint p.md                            # static analysis, no LLM required
 pe dashboard                            # terminal analytics dashboard
 pe doctor                               # health check
 pe store {list,stats,search,export,delete,clear}
@@ -63,6 +71,8 @@ pe version
 | `--agent claude` | Filter by agent (dashboard) |
 | `--ascii` | ASCII-only fallback (no Unicode) |
 | `--show-prompts` | Show unredacted seed text in recent table |
+| `--judge-via {claude,codex,auggie,opencode}` | Blind judge: score via a different agent than the generator |
+| `--judge-model <name>` | Blind judge: override the API model used for the rubric call |
 
 ---
 
@@ -70,6 +80,7 @@ pe version
 
 | Version | What |
 |---------|------|
+| **v1.5.0** | "Ready for the world": Python 3.12+ baseline, GitHub Actions CI matrix, PyPI release workflow (Trusted Publishing), `pe lint` static analysis, blind judging (`--judge-via` / `--judge-model`), 50 tests |
 | **v1.4.1** | 38-unit test suite (stdlib unittest), bold parameter fix in viewer |
 | **v1.4.0** | Rich ANSI prompt viewer + progress spinner with elapsed timer |
 | **v1.3.0** | `pe dashboard` — stdlib-only ANSI analytics TUI (sparklines, bars, panels) |
@@ -94,12 +105,13 @@ Auggie gave the tool a **5.5/10** initially, identifying 12 issues. All were fix
 | 4 | `pe persona` with no seed crashes | ✅ Fixed v1.2.0 |
 | 5 | `--dry-run` still writes to store | ✅ Fixed v1.2.0 |
 | 6 | Version mismatch (1.0.0 vs 1.1.0) | ✅ Fixed v1.2.0 |
-| 7 | No test suite | ✅ Fixed v1.4.1 (38 tests) |
-| 8 | Hard-coded local paths in scripts | ✅ Legacy scripts, packaged CLI uses relative paths |
-| 9 | Homebrew formula not ready | 📋 SHA placeholder remains |
+| 7 | No test suite | ✅ Fixed v1.5.0 (50 tests + CI matrix on 3.12/3.13/3.14) |
+| 8 | Hard-coded local paths in scripts | ✅ Fixed v1.5.0 (legacy scripts now use `sys.executable`) |
+| 9 | Homebrew formula not ready | 📋 SHA placeholder remains (auto-bump on next release) |
 | 10 | Privacy implications of auto-store | ✅ First-run notice + `store delete/clear` |
 | 11 | Auggie comparison overclaimed | ✅ Repositioned as complementary tools |
 | 12 | Agent mappings incorrect (codex vs copilot) | ✅ Fixed (`.codex/system.md` vs `.github/copilot-instructions.md`) |
+| 13 | Same model generates and judges (benchmark validity) | ✅ Fixed v1.5.0 (`--judge-via` / `--judge-model` blind judging) |
 
 ---
 
@@ -117,7 +129,21 @@ Uses the **SurePrompts 7-Dimension Rubric** (LLM-as-judge):
 
 Score ranges: 28-35 production-ready, 21-27 working draft, 14-20 needs revision, 7-13 rewrite.
 
-**Known limitation:** Same LLM can both generate and judge. Scores reward structure. Auggie flagged this as not methodologically valid for agent-behavior claims.
+**Known limitation:** The same LLM can both generate and judge — this rewards
+structure regardless of substance and isn't methodologically valid for
+agent-behavior claims.
+
+**Mitigation (v1.5.0): blind judging.** Pass `--judge-via <agent>` to route the
+rubric prompt through a different agent CLI than the generator, or
+`--judge-model <name>` to override just the model on the API call. Example:
+
+```bash
+# generator: DeepSeek API   judge: Claude Code
+pe benchmark --enhance "a Rust dev" --judge-via claude
+```
+
+The judge's identity is recorded in `store.jsonl` under `benchmark.judge` so
+historical results can be filtered by who scored them.
 
 ---
 
@@ -169,8 +195,29 @@ pe doctor    # verify everything works
 ```bash
 cd prompt-enhancer
 python3 -m unittest tests/test_all.py -v
-# 38 tests, all passing
+# 50 tests, all passing
 ```
+
+CI runs the same matrix on every push: Ubuntu + macOS × Python 3.12 / 3.13 / 3.14.
+
+---
+
+## Releasing to PyPI (one-time setup)
+
+The PyPI release workflow uses **Trusted Publishing** (OIDC, no API tokens).
+Before the first `git tag v1.5.0 && git push --tags` will publish anything:
+
+1. Sign in at <https://pypi.org/manage/account/publishing/>
+2. Add a "pending publisher":
+   - **PyPI Project Name:** `prompt-enhancer`
+   - **Owner:** `hongphuc5497`
+   - **Repository:** `prompt-enhancer`
+   - **Workflow filename:** `release.yml`
+   - **Environment:** `pypi`
+3. Push a tag — the workflow builds sdist + wheel, verifies the tag matches
+   `pyproject.toml`, and publishes.
+
+After the first publish, the trusted publisher becomes permanent.
 
 ---
 
@@ -178,9 +225,8 @@ python3 -m unittest tests/test_all.py -v
 
 - **`pe serve`** — local web UI for exploring the store
 - **Textual-based interactive TUI** — if users want arrow-key navigation
-- **PyPI publication** — `pip install prompt-enhancer` without git URL
-- **GitHub Actions CI** — auto-run tests on push
 - **`pe diff`** — compare two enhanced prompts side-by-side
 - **`pe share`** — generate a shareable link/gist of a prompt
-- **Blind judging** — use a different model for benchmark scores than generation
-- **Homebrew formula with real SHA256** — currently placeholder
+- **Multi-judge consensus** — average scores from 3 judges, report variance
+- **Homebrew formula auto-bump** — GitHub Action that updates SHA256 on release
+- **VS Code / Neovim integration** — call `pe enhance-task` on the current selection

@@ -368,11 +368,11 @@ def main():
     parser.add_argument("--after", type=str, help="Path to enhanced/after prompt file")
     parser.add_argument("--enhance", type=str, help="Enhance a seed idea via prompt-enhancer.py, then benchmark both")
     parser.add_argument("--enhancer-path", type=str,
-                        default=os.path.expanduser("~/repos/tools/prompt-enhancer/prompt-enhancer.py"),
+                        default=str(Path(__file__).resolve().parent / "prompt-enhancer.py"),
                         help="Path to prompt-enhancer.py")
     parser.add_argument("--execute", action="store_true", help="Run dynamic benchmark (execute prompts, compare outputs)")
     parser.add_argument("--tests", type=str, default=None, help="Path to test cases JSON for dynamic benchmark")
-    parser.add_argument("--python", type=str, default="/Users/hongphuc/.pyenv/versions/3.11.6/bin/python3",
+    parser.add_argument("--python", type=str, default=sys.executable,
                         help="Python path for enhancer subprocess")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
     parser.add_argument("--save", type=str, help="Save benchmark results to file")

@@ -27,7 +27,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.5.0"
 
 # ═══════════════════════════════════════════════════════════════════
 # Config
@@ -303,14 +303,30 @@ __PROMPT_TEXT__
 ---PROMPT_END---"""
 
 
-def benchmark_score(prompt_text, config):
+def benchmark_score(prompt_text, config, judge_via=None, judge_model=None):
+    """Score a prompt with the 7-dimension rubric.
+
+    Blind judging: pass judge_via=<agent> to route the rubric prompt through a
+    different agent CLI than the one used to generate the prompt. judge_model
+    overrides the API model name (ignored when judge_via is set).
+    """
     judge_prompt = RUBRIC_PROMPT.replace("__PROMPT_TEXT__", prompt_text)
-    result = call_llm(judge_prompt, config, temperature=0.3)
+    if judge_via:
+        from . import agents as agent_mod
+        result = agent_mod.run_via_agent(judge_prompt, judge_via)
+    else:
+        result = call_llm(judge_prompt, config, model=judge_model, temperature=0.3)
     cleaned = result.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
+    # Some agent CLIs wrap output in extra prose — extract first JSON object.
+    if not cleaned.startswith("{"):
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end > start:
+            cleaned = cleaned[start:end + 1]
     return json.loads(cleaned)
 
 
@@ -487,8 +503,16 @@ def cmd_install(args):
 
 def cmd_benchmark(args):
     config = load_config()
-    if not config["api_key"]:
-        die("LLM_API_KEY not set")
+    judge_via = getattr(args, 'judge_via', None)
+    judge_model = getattr(args, 'judge_model', None)
+    # API key only required when we still need it: --enhance always uses the API
+    # for generation; scoring uses the API only if no judge_via override.
+    needs_api = bool(args.enhance) or not judge_via
+    if needs_api and not config["api_key"]:
+        die("LLM_API_KEY not set (or pass --judge-via to score without an API key)")
+
+    def _score(text):
+        return benchmark_score(text, config, judge_via=judge_via, judge_model=judge_model)
 
     if args.enhance:
         seed = args.enhance
@@ -497,10 +521,19 @@ def cmd_benchmark(args):
         t0 = time.time()
         enhanced = persona(seed, config, workspace)
         duration_ms = int((time.time() - t0) * 1000)
-        before_scores = benchmark_score(seed, config)
-        after_scores = benchmark_score(enhanced, config)
+        before_scores = _score(seed)
+        after_scores = _score(enhanced)
         store_init()
-        store_save(seed, enhanced, benchmark={"before": before_scores, "after": after_scores}, duration_ms=duration_ms, project=project)
+        store_save(
+            seed, enhanced,
+            benchmark={
+                "before": before_scores,
+                "after": after_scores,
+                "judge": {"via": judge_via, "model": judge_model} if (judge_via or judge_model) else None,
+            },
+            duration_ms=duration_ms,
+            project=project,
+        )
     else:
         before_text = args.before or ""
         after_text = args.after or ""
@@ -510,13 +543,15 @@ def cmd_benchmark(args):
             after_text = Path(after_text).expanduser().read_text()
         if not before_text and not after_text:
             die("Provide --before/--after or use --enhance")
-        before_scores = benchmark_score(before_text, config) if before_text else None
-        after_scores = benchmark_score(after_text, config) if after_text else None
+        before_scores = _score(before_text) if before_text else None
+        after_scores = _score(after_text) if after_text else None
 
     if getattr(args, 'json', False):
         out = {}
         if before_scores: out["before"] = before_scores
         if after_scores: out["after"] = after_scores
+        if judge_via or judge_model:
+            out["judge"] = {"via": judge_via, "model": judge_model}
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
@@ -528,6 +563,10 @@ def cmd_benchmark(args):
         ("output_validation", "Output Validation"),
     ]
     print(f"\n{BAR}\n  PROMPT QUALITY BENCHMARK — SurePrompts 7-Dimension Rubric\n{BAR}")
+    if judge_via or judge_model:
+        judge_label = judge_via or (judge_model and f"model={judge_model}") or "default"
+        gen_label = "API" if args.enhance else "input"
+        print(f"  judge: {judge_label}   generator: {gen_label}")
     if before_scores:
         print(f"\n  BEFORE:  {before_scores.get('total','?')}/35  ({before_scores.get('verdict','?')})")
     if after_scores:
@@ -629,7 +668,7 @@ def cmd_doctor(args):
 
     # Python version
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    checks.append(("Python >= 3.11", sys.version_info >= (3, 11), py_ver))
+    checks.append(("Python >= 3.12", sys.version_info >= (3, 12), py_ver))
 
     # Config
     api_set = bool(config["api_key"])
@@ -672,6 +711,39 @@ def cmd_doctor(args):
 
     all_ok = all(ok for _, ok, _ in checks)
     print(f"\nOverall: {'✅ Healthy' if all_ok else '❌ Issues found'}")
+
+
+def cmd_lint(args):
+    """pe lint — static analysis of a system prompt (no LLM)."""
+    from . import lint as lint_mod
+    # Read from --file, positional path, stdin ('-'), or assume positional is inline text
+    target = getattr(args, 'target', None)
+    if getattr(args, 'file', None):
+        path = Path(args.file).expanduser()
+        if not path.exists():
+            die(f"File not found: {path}")
+        text = path.read_text()
+    elif target == "-":
+        text = sys.stdin.read()
+    elif target and Path(target).expanduser().exists():
+        text = Path(target).expanduser().read_text()
+    elif target:
+        text = target
+    else:
+        die("Provide a file path, inline text, or '-' for stdin")
+
+    findings = lint_mod.lint(text)
+    score_value = lint_mod.score(findings)
+
+    if getattr(args, 'json', False):
+        print(json.dumps({"score": score_value, "findings": findings}, indent=2, ensure_ascii=False))
+    else:
+        use_color = sys.stdout.isatty() and not getattr(args, 'no_color', False)
+        print(lint_mod.format_report(findings, score_value, color=use_color))
+
+    # Exit non-zero if any error-level finding so CI can gate on it
+    if any(f["severity"] == "error" for f in findings):
+        sys.exit(2)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -776,6 +848,10 @@ def main():
     p_bench.add_argument("--no-context", action="store_true")
     p_bench.add_argument("--json", action="store_true")
     p_bench.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
+    p_bench.add_argument("--judge-via", choices=["claude", "codex", "auggie", "opencode"], dest="judge_via",
+                         help="Blind judge: score via a different agent than the generator")
+    p_bench.add_argument("--judge-model", dest="judge_model",
+                         help="Blind judge: override API model name for the rubric call")
 
     # store
     p_store = sub.add_parser("store", help="Analytics store commands")
@@ -797,6 +873,13 @@ def main():
 
     # doctor
     sub.add_parser("doctor", help="Health check")
+
+    # lint — static analysis of a system prompt (no LLM)
+    p_lint = sub.add_parser("lint", help="Static analysis of a system prompt (no API key needed)")
+    p_lint.add_argument("target", nargs="?", help="Path to prompt file, inline text, or '-' for stdin")
+    p_lint.add_argument("--file", "-f", help="Read prompt from file")
+    p_lint.add_argument("--json", action="store_true", help="Machine-readable output")
+    p_lint.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
 
     # dashboard
     p_dash = sub.add_parser("dashboard", help="Terminal dashboard with analytics")
@@ -825,6 +908,8 @@ def main():
         cmd_store(args)
     elif args.command == "doctor":
         cmd_doctor(args)
+    elif args.command == "lint":
+        cmd_lint(args)
     elif args.command == "dashboard":
         from . import dashboard
         dashboard.cmd_dashboard(

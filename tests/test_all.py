@@ -379,6 +379,106 @@ class TestVersion(unittest.TestCase):
         from prompt_enhancer import __version__ as init_version
         self.assertEqual(init_version, VERSION)
 
+    def test_python_minimum(self):
+        """Project targets Python >= 3.12."""
+        self.assertGreaterEqual(sys.version_info, (3, 12))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Lint module (pe lint)
+# ═══════════════════════════════════════════════════════════════════
+
+from prompt_enhancer import lint as lint_mod
+
+
+class TestLint(unittest.TestCase):
+    def test_empty_prompt_is_error(self):
+        findings = lint_mod.lint("")
+        codes = [f["code"] for f in findings]
+        self.assertIn("empty", codes)
+        self.assertEqual(findings[0]["severity"], "error")
+
+    def test_clean_prompt_has_no_missing_sections(self):
+        prompt = (
+            "# System Prompt: Rust Senior Dev\n\n"
+            "## Role\nSenior Rust engineer with 10 years of experience.\n\n"
+            "## Context\nWorking on a high-throughput backend service.\n\n"
+            "## Rules\n- Prefer iterators over manual loops.\n- Use Result, not panic.\n\n"
+            "## Tech\n- tokio, axum, sqlx\n\n"
+            "## Format\nReturn diffs in unified format.\n\n"
+            "## Pitfalls\nDo not use unwrap() in library code.\n\n"
+            "## Examples\nGiven a slice, return the sum: `slice.iter().sum()`\n"
+        )
+        findings = lint_mod.lint(prompt)
+        missing = [f for f in findings if f["code"].startswith("missing-section:")]
+        self.assertEqual(missing, [], f"unexpected missing sections: {missing}")
+
+    def test_missing_sections_are_flagged(self):
+        prompt = "# Just a role\n\nYou are a developer. Be helpful.\n" * 10
+        findings = lint_mod.lint(prompt)
+        codes = {f["code"] for f in findings}
+        # Several canonical sections should be reported missing
+        self.assertTrue(any(c.startswith("missing-section:") for c in codes))
+
+    def test_vague_terms_flagged(self):
+        prompt = "# Role\n" + ("- You should maybe try to be careful.\n" * 5) + ("- Detail line.\n" * 20)
+        findings = lint_mod.lint(prompt)
+        codes = [f["code"] for f in findings]
+        self.assertIn("vague", codes)
+
+    def test_contradiction_detection(self):
+        prompt = "# Role\nAlways use semicolons. Never use semicolons in this project." + "\nmore text" * 30
+        findings = lint_mod.lint(prompt)
+        codes = [f["code"] for f in findings]
+        self.assertIn("contradiction", codes)
+        contradiction = next(f for f in findings if f["code"] == "contradiction")
+        self.assertEqual(contradiction["severity"], "error")
+
+    def test_score_is_100_when_clean(self):
+        self.assertEqual(lint_mod.score([]), 100)
+
+    def test_score_penalizes_errors_more_than_warnings(self):
+        err = [{"severity": "error", "code": "x", "line": 1, "message": ""}]
+        warn = [{"severity": "warning", "code": "x", "line": 1, "message": ""}]
+        self.assertLess(lint_mod.score(err), lint_mod.score(warn))
+
+    def test_format_report_renders(self):
+        report = lint_mod.format_report([], 100, color=False)
+        self.assertIn("pe lint", report)
+        self.assertIn("100/100", report)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Blind judging wiring (pe benchmark --judge-via / --judge-model)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBlindJudge(unittest.TestCase):
+    def test_benchmark_score_routes_to_agent_when_judge_via_set(self):
+        from prompt_enhancer import cli as cli_mod
+        fake_json = '{"role_clarity":{"score":5,"reasoning":"x"},"total":35,"verdict":"production-ready","summary":"x"}'
+        with patch.object(cli_mod, "call_llm") as mock_api, \
+             patch("prompt_enhancer.agents.run_via_agent", return_value=fake_json) as mock_agent:
+            result = cli_mod.benchmark_score("prompt text", {"api_key": "", "base_url": "", "model": ""},
+                                             judge_via="claude")
+            mock_agent.assert_called_once()
+            mock_api.assert_not_called()
+            self.assertEqual(result["total"], 35)
+
+    def test_benchmark_score_passes_judge_model_to_api(self):
+        from prompt_enhancer import cli as cli_mod
+        fake_json = '{"total":28,"verdict":"production-ready","summary":"x"}'
+        with patch.object(cli_mod, "call_llm", return_value=fake_json) as mock_api:
+            cli_mod.benchmark_score("prompt text",
+                                    {"api_key": "k", "base_url": "u", "model": "default-model"},
+                                    judge_model="gpt-4o")
+            _, kwargs = mock_api.call_args
+            self.assertEqual(kwargs.get("model"), "gpt-4o")
+
+    def test_run_via_agent_unknown_raises(self):
+        from prompt_enhancer.agents import run_via_agent
+        with self.assertRaises(RuntimeError):
+            run_via_agent("hi", "no-such-agent")
+
 
 if __name__ == "__main__":
     unittest.main()

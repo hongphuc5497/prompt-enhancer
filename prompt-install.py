@@ -25,8 +25,8 @@ import subprocess
 import argparse
 from pathlib import Path
 
-ENHANCER = os.path.expanduser("~/repos/tools/prompt-enhancer/prompt-enhancer.py")
-PYTHON = "/Users/hongphuc/.pyenv/versions/3.11.6/bin/python3"
+ENHANCER = os.environ.get("PROMPT_ENHANCER_SCRIPT") or str(Path(__file__).resolve().parent / "prompt-enhancer.py")
+PYTHON = os.environ.get("PROMPT_ENHANCER_PYTHON") or sys.executable
 
 AGENT_CONFIGS = {
     "claude": {

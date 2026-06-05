@@ -138,6 +138,44 @@ AGENT_ENHANCERS = {
 }
 
 
+# Invocation recipes for running an arbitrary prompt through an agent CLI.
+# Used by the blind-judge path so the benchmark judge can differ from the generator.
+AGENT_INVOKERS = {
+    "claude":   {"binary": "claude",   "args": ["-p"],       "env": {"CLAUDE_CODE_HEADLESS": "1"}},
+    "codex":    {"binary": "codex",    "args": [],           "env": {}},
+    "auggie":   {"binary": "auggie",   "args": ["--print"],  "env": {}},
+    "opencode": {"binary": "opencode", "args": ["--print"],  "env": {}},
+}
+
+
+def run_via_agent(prompt, via_agent, timeout=180):
+    """Run a raw prompt through an agent CLI and return its stdout.
+
+    Unlike enhance_via_*, this passes the prompt verbatim — no enhancement
+    template wrapping. Used for blind judging in `pe benchmark --judge-via`.
+    """
+    recipe = AGENT_INVOKERS.get(via_agent)
+    if not recipe:
+        raise RuntimeError(f"Unknown agent: {via_agent}. Supported: {', '.join(AGENT_INVOKERS.keys())}")
+    binary = _find_binary([recipe["binary"]])
+    if not binary:
+        raise RuntimeError(f"{via_agent} not found on PATH")
+    result = subprocess.run(
+        [binary, *recipe["args"], prompt],
+        capture_output=True, text=True, timeout=timeout,
+        env={**os.environ, **recipe["env"]},
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"{via_agent} failed: {result.stderr[:200]}")
+    output = result.stdout.strip()
+    if via_agent == "auggie":
+        if "🤖" in output:
+            output = output.split("🤖")[-1].strip()
+        import re
+        output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)
+    return output
+
+
 def enhance(seed, via_agent=None, config=None):
     """Enhance a seed prompt. If via_agent is set, delegate to that agent.
     Otherwise, use the API key (legacy path).

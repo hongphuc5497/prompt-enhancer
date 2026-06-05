@@ -22,8 +22,8 @@ else
     git clone "${REPO}" "${INSTALL_DIR}" 2>/dev/null
 fi
 
-# Install via pip (user install, no venv needed)
-PYTHON="${PYTHON3:-$(which python3.11 2>/dev/null || which python3)}"
+# Install via pip (user install, no venv needed) — prefer newest stable interpreter
+PYTHON="${PYTHON3:-$(which python3.14 2>/dev/null || which python3.13 2>/dev/null || which python3.12 2>/dev/null || which python3)}"
 echo "  Using Python: ${PYTHON}"
 "${PYTHON}" -m pip install --user --quiet "${INSTALL_DIR}" 2>/dev/null || {
     echo "  pip install failed, falling back to symlink..."
