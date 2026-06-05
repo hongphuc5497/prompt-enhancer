@@ -15,6 +15,10 @@
 - **PyPI release workflow** — `.github/workflows/release.yml` publishes sdist +
   wheel via PyPI Trusted Publishing (OIDC) on tag push. Requires one-time PyPI
   setup of the `pypi` environment publisher.
+- **PyPI distribution renamed to `pe-cli`** — the name `prompt-enhancer` was
+  already claimed on PyPI by an unrelated project. The GitHub repo, the
+  `prompt_enhancer` import package, and the `pe` / `prompt-enhancer` CLI
+  binaries are unchanged. Only the install line changes: `pip install pe-cli`.
 - Test suite grew from 38 → 50 (added lint and blind-judge coverage).
 - Legacy scripts (`prompt-install.py`, `prompt-benchmark.py`) no longer hard-code
   `/Users/hongphuc/.pyenv/...` paths — now use `sys.executable` (audit issue #8).

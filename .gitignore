@@ -1,4 +1,5 @@
 build/
-src/prompt_enhancer.egg-info/
+dist/
+src/*.egg-info/
 *.pyc
 __pycache__/

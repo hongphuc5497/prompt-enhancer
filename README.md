@@ -21,8 +21,17 @@ The CLI is `pe` (short) and `prompt-enhancer` (long). Both work identically.
 ## Install
 
 ```bash
+pip install pe-cli
+```
+
+Or install directly from source:
+
+```bash
 pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
 ```
+
+> The PyPI distribution is `pe-cli` (the name `prompt-enhancer` was already taken).
+> The command is still `pe` (or `prompt-enhancer`) — only the install line changes.
 
 Set your API key:
 ```bash
