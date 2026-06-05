@@ -355,6 +355,13 @@ def cmd_persona(args):
         if not getattr(args, 'json', False):
             print(f"\n[Saved to {STORE_FILE}]", file=sys.stderr)
 
+    # Copy to clipboard
+    if getattr(args, 'copy', False):
+        if copy_to_clipboard(enhanced):
+            print("[Copied to clipboard]", file=sys.stderr)
+        else:
+            print("[Clipboard unavailable — install xclip/wl-clipboard on Linux]", file=sys.stderr)
+
 
 def cmd_enhance_task(args):
     """pe enhance-task — inline task refinement."""
@@ -381,6 +388,10 @@ def cmd_enhance_task(args):
     if not getattr(args, 'no_store', False):
         store_init()
         store_save(seed, enhanced, duration_ms=duration_ms, project=project)
+
+    if getattr(args, 'copy', False):
+        if copy_to_clipboard(enhanced):
+            print("[Copied to clipboard]", file=sys.stderr)
 
 
 def cmd_install(args):
@@ -660,6 +671,27 @@ def die(msg):
     sys.exit(1)
 
 
+def copy_to_clipboard(text):
+    """Copy text to system clipboard. Returns True on success."""
+    import platform
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.run(["pbcopy"], input=text.encode(), check=True)
+        elif system == "Linux":
+            if shutil.which("wl-copy"):
+                subprocess.run(["wl-copy"], input=text.encode(), check=True)
+            elif shutil.which("xclip"):
+                subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=True)
+            else:
+                return False
+        else:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Main CLI
 # ═══════════════════════════════════════════════════════════════════
@@ -683,6 +715,7 @@ def main():
     p_pers.add_argument("--json", action="store_true", help="JSON output")
     p_pers.add_argument("--no-store", action="store_true", help="Skip saving to store")
     p_pers.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
+    p_pers.add_argument("--copy", "-c", action="store_true", help="Copy enhanced output to clipboard")
 
     # enhance-task (new — inline task refinement, Auggie-style)
     p_task = sub.add_parser("enhance-task", help="Inline task refinement (like Auggie Ctrl+P)")
@@ -693,6 +726,7 @@ def main():
     p_task.add_argument("--json", action="store_true")
     p_task.add_argument("--no-store", action="store_true")
     p_task.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent")
+    p_task.add_argument("--copy", "-c", action="store_true", help="Copy enhanced output to clipboard")
 
     # install (safe — with backup, --force, creates parent dirs)
     p_inst = sub.add_parser("install", help="Install enhanced persona into agent config")
