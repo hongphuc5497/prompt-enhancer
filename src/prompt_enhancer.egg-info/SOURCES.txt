@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 src/prompt_enhancer/__init__.py
+src/prompt_enhancer/agents.py
 src/prompt_enhancer/cli.py
 src/prompt_enhancer/dashboard.py
 src/prompt_enhancer.egg-info/PKG-INFO

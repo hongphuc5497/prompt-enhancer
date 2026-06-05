@@ -320,31 +320,38 @@ def benchmark_score(prompt_text, config):
 
 def cmd_persona(args):
     """pe persona — generate 7-section system prompt."""
-    config = load_config()
-    if not config["api_key"]:
-        die("LLM_API_KEY not set. Run: echo 'LLM_API_KEY=sk-...' > ~/.prompt-enhancer.env")
-
+    via = getattr(args, 'via', None)
     seed = _get_seed(args)
     if not seed:
         die("Provide a seed prompt. Usage: pe persona 'a senior Rust developer...'")
 
+    if via:
+        # Delegate to existing agent — no API key needed
+        from . import agents
+        enhanced = agents.enhance(seed, via_agent=via)
+    else:
+        config = load_config()
+        if not config["api_key"]:
+            die("LLM_API_KEY not set. Use --via <agent> or set API key.")
+        profile = getattr(args, 'profile', None)
+        project = getattr(args, 'project', str(Path.cwd()))
+        workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+        concise = getattr(args, 'concise', False)
+        t0 = time.time()
+        enhanced = persona(seed, config, workspace, profile, concise)
+        duration_ms = int((time.time() - t0) * 1000)
+
     profile = getattr(args, 'profile', None)
     project = getattr(args, 'project', str(Path.cwd()))
-    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
-    concise = getattr(args, 'concise', False)
-
-    t0 = time.time()
-    enhanced = persona(seed, config, workspace, profile, concise)
-    duration_ms = int((time.time() - t0) * 1000)
 
     if getattr(args, 'json', False):
-        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "duration_ms": duration_ms}, ensure_ascii=False))
+        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via, "duration_ms": 0}, ensure_ascii=False))
     else:
         print(enhanced)
 
     if not getattr(args, 'no_store', False):
         store_init()
-        store_save(seed, enhanced, duration_ms=duration_ms, profile=profile, project=project)
+        store_save(seed, enhanced, via or None, project, profile)
         if not getattr(args, 'json', False):
             print(f"\n[Saved to {STORE_FILE}]", file=sys.stderr)
 
@@ -617,6 +624,11 @@ def cmd_doctor(args):
         except Exception as e:
             checks.append(("LLM connectivity", False, str(e)[:60]))
 
+    # Agent binaries (--via support)
+    from . import agents as agent_mod
+    for agent, binary, status in agent_mod.get_available_agents():
+        checks.append((f"Agent: {agent}", status == "ready", binary or status))
+
     # Print
     print(f"prompt-enhancer {VERSION} — Health Check\n")
     for name, ok, detail in checks:
@@ -670,6 +682,7 @@ def main():
     p_pers.add_argument("--concise", action="store_true", help="Shorter output (1-2 bullets/section)")
     p_pers.add_argument("--json", action="store_true", help="JSON output")
     p_pers.add_argument("--no-store", action="store_true", help="Skip saving to store")
+    p_pers.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
 
     # enhance-task (new — inline task refinement, Auggie-style)
     p_task = sub.add_parser("enhance-task", help="Inline task refinement (like Auggie Ctrl+P)")
@@ -679,6 +692,7 @@ def main():
     p_task.add_argument("--no-context", action="store_true")
     p_task.add_argument("--json", action="store_true")
     p_task.add_argument("--no-store", action="store_true")
+    p_task.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent")
 
     # install (safe — with backup, --force, creates parent dirs)
     p_inst = sub.add_parser("install", help="Install enhanced persona into agent config")
@@ -692,6 +706,7 @@ def main():
     p_inst.add_argument("--force", action="store_true", help="Overwrite without backup")
     p_inst.add_argument("--json", action="store_true")
     p_inst.add_argument("--no-store", action="store_true")
+    p_inst.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
 
     # benchmark
     p_bench = sub.add_parser("benchmark", help="Score prompts on 7-dimension rubric")
@@ -701,6 +716,7 @@ def main():
     p_bench.add_argument("--project", default=str(Path.cwd()))
     p_bench.add_argument("--no-context", action="store_true")
     p_bench.add_argument("--json", action="store_true")
+    p_bench.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
 
     # store
     p_store = sub.add_parser("store", help="Analytics store commands")
