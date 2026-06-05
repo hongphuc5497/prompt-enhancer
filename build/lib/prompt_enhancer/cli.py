@@ -723,6 +723,16 @@ def main():
     # doctor
     sub.add_parser("doctor", help="Health check")
 
+    # dashboard
+    p_dash = sub.add_parser("dashboard", help="Terminal dashboard with analytics")
+    p_dash.add_argument("--agent", help="Filter by agent")
+    p_dash.add_argument("--since", help="Filter: 24h, 7d, 2026-06-01, today")
+    p_dash.add_argument("--json", action="store_true", help="Machine-readable output")
+    p_dash.add_argument("--ascii", action="store_true", help="ASCII-only mode (no Unicode)")
+    p_dash.add_argument("--show-prompts", action="store_true", help="Show seed text in recent table")
+    p_dash.add_argument("--refresh", type=int, default=0, help="Auto-refresh every N seconds")
+    p_dash.add_argument("--store", help="Custom store path")
+
     # version
     sub.add_parser("version", help="Show version")
 
@@ -740,6 +750,16 @@ def main():
         cmd_store(args)
     elif args.command == "doctor":
         cmd_doctor(args)
+    elif args.command == "dashboard":
+        from . import dashboard
+        dashboard.cmd_dashboard(
+            store_path=getattr(args, 'store', None),
+            agent=args.agent,
+            since=args.since,
+            json_out=args.json,
+            ascii_mode=args.ascii,
+            show_prompts=getattr(args, 'show_prompts', False),
+        )
     elif args.command == "version":
         print(f"prompt-enhancer {VERSION}")
     else:
