@@ -5,6 +5,7 @@ src/prompt_enhancer/__init__.py
 src/prompt_enhancer/agents.py
 src/prompt_enhancer/cli.py
 src/prompt_enhancer/dashboard.py
+src/prompt_enhancer/view.py
 src/prompt_enhancer.egg-info/PKG-INFO
 src/prompt_enhancer.egg-info/SOURCES.txt
 src/prompt_enhancer.egg-info/dependency_links.txt

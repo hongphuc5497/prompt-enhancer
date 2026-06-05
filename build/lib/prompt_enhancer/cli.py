@@ -325,10 +325,14 @@ def cmd_persona(args):
     if not seed:
         die("Provide a seed prompt. Usage: pe persona 'a senior Rust developer...'")
 
+    from . import view
+
     if via:
         # Delegate to existing agent — no API key needed
         from . import agents
-        enhanced = agents.enhance(seed, via_agent=via)
+        view.log_progress(f"Delegating to {via}...")
+        with view.Spinner(f"Enhancing via {via}"):
+            enhanced = agents.enhance(seed, via_agent=via)
     else:
         config = load_config()
         if not config["api_key"]:
@@ -337,23 +341,29 @@ def cmd_persona(args):
         project = getattr(args, 'project', str(Path.cwd()))
         workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
         concise = getattr(args, 'concise', False)
-        t0 = time.time()
-        enhanced = persona(seed, config, workspace, profile, concise)
-        duration_ms = int((time.time() - t0) * 1000)
+        view.log_progress("Calling LLM API...")
+        with view.Spinner("Enhancing with LLM"):
+            t0 = time.time()
+            enhanced = persona(seed, config, workspace, profile, concise)
+            duration_ms = int((time.time() - t0) * 1000)
 
     profile = getattr(args, 'profile', None)
     project = getattr(args, 'project', str(Path.cwd()))
 
+    # Output: rich viewer or raw
     if getattr(args, 'json', False):
         print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via, "duration_ms": 0}, ensure_ascii=False))
-    else:
+    elif getattr(args, 'raw', False) or not sys.stdout.isatty():
         print(enhanced)
+    else:
+        view.render_prompt(enhanced, agent=via)
 
+    # Save to store
     if not getattr(args, 'no_store', False):
         store_init()
         store_save(seed, enhanced, via or None, project, profile)
-        if not getattr(args, 'json', False):
-            print(f"\n[Saved to {STORE_FILE}]", file=sys.stderr)
+        if not getattr(args, 'json', False) and not getattr(args, 'raw', False):
+            view.log_progress(f"Saved to store")
 
     # Copy to clipboard
     if getattr(args, 'copy', False):
@@ -365,30 +375,44 @@ def cmd_persona(args):
 
 def cmd_enhance_task(args):
     """pe enhance-task — inline task refinement."""
-    config = load_config()
-    if not config["api_key"]:
-        die("LLM_API_KEY not set. Run: echo 'LLM_API_KEY=sk-...' > ~/.prompt-enhancer.env")
-
+    via = getattr(args, 'via', None)
     seed = _get_seed(args)
     if not seed:
         die("Provide a task. Usage: pe enhance-task 'fix the login bug'")
 
-    project = getattr(args, 'project', str(Path.cwd()))
-    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+    from . import view
 
-    t0 = time.time()
-    enhanced = enhance_task(seed, config, workspace)
-    duration_ms = int((time.time() - t0) * 1000)
-
-    if getattr(args, 'json', False):
-        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "duration_ms": duration_ms}, ensure_ascii=False))
+    if via:
+        from . import agents
+        view.log_progress(f"Delegating to {via}...")
+        with view.Spinner(f"Enhancing via {via}"):
+            enhanced = agents.enhance(seed, via_agent=via)
     else:
-        print(enhanced)
+        config = load_config()
+        if not config["api_key"]:
+            die("LLM_API_KEY not set. Use --via <agent> or set API key.")
+        project = getattr(args, 'project', str(Path.cwd()))
+        workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+        view.log_progress("Calling LLM API...")
+        with view.Spinner("Enhancing task with LLM"):
+            t0 = time.time()
+            enhanced = enhance_task(seed, config, workspace)
+            duration_ms = int((time.time() - t0) * 1000)
 
+    # Output
+    if getattr(args, 'json', False):
+        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via}, ensure_ascii=False))
+    elif getattr(args, 'raw', False) or not sys.stdout.isatty():
+        print(enhanced)
+    else:
+        view.render_prompt(enhanced, agent=via)
+
+    # Save
     if not getattr(args, 'no_store', False):
         store_init()
-        store_save(seed, enhanced, duration_ms=duration_ms, project=project)
+        store_save(seed, enhanced, duration_ms=0, project=getattr(args, 'project', str(Path.cwd())))
 
+    # Clipboard
     if getattr(args, 'copy', False):
         if copy_to_clipboard(enhanced):
             print("[Copied to clipboard]", file=sys.stderr)
@@ -716,6 +740,7 @@ def main():
     p_pers.add_argument("--no-store", action="store_true", help="Skip saving to store")
     p_pers.add_argument("--via", choices=["claude", "codex", "auggie", "opencode"], help="Delegate to existing agent (no API key needed)")
     p_pers.add_argument("--copy", "-c", action="store_true", help="Copy enhanced output to clipboard")
+    p_pers.add_argument("--raw", action="store_true", help="Raw text output (skip styled terminal UI)")
 
     # enhance-task (new — inline task refinement, Auggie-style)
     p_task = sub.add_parser("enhance-task", help="Inline task refinement (like Auggie Ctrl+P)")
