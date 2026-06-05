@@ -11,3 +11,4 @@ src/prompt_enhancer.egg-info/SOURCES.txt
 src/prompt_enhancer.egg-info/dependency_links.txt
 src/prompt_enhancer.egg-info/entry_points.txt
 src/prompt_enhancer.egg-info/top_level.txt
+tests/test_all.py

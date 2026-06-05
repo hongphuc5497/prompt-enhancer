@@ -55,10 +55,11 @@ def _is_tty():
     return sys.stdout.isatty()
 
 
-def c(text, color):
+def c(text, color, bold=False):
     if not _use_color():
         return text
-    return f"{ANSI.get(color, '')}{text}{ANSI['reset']}"
+    prefix = ANSI.get("bold", "") if bold else ""
+    return f"{prefix}{ANSI.get(color, '')}{text}{ANSI['reset']}"
 
 
 # ═══════════════════════════════════════════════════════════════════
