@@ -6,6 +6,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/prompt-enhancer-cli/"><img src="https://img.shields.io/pypi/v/prompt-enhancer-cli?logo=pypi&logoColor=white&label=PyPI&color=3775A9" alt="PyPI"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.5.0-blue" alt="Version"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.12+-blue" alt="Python 3.12+"></a>

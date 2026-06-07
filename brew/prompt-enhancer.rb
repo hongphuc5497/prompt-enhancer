@@ -1,25 +1,24 @@
 class PromptEnhancer < Formula
+  include Language::Python::Virtualenv
+
   desc "Reverse-engineered from Auggie's Ctrl+P — rough ideas → production system prompts"
   homepage "https://github.com/hongphuc5497/prompt-enhancer"
-  url "https://github.com/hongphuc5497/prompt-enhancer/archive/refs/tags/v1.5.0.tar.gz"
-  sha256 "REPLACE_WITH_ACTUAL_SHA256"
+  # Published to PyPI as `prompt-enhancer-cli` (the bare name was already taken).
+  url "https://files.pythonhosted.org/packages/ea/33/1539a28522d359fb037cac70a5eb24123496253e2646888e2987ddab9d69/prompt_enhancer_cli-1.5.0.tar.gz"
+  sha256 "63ad5539dd414f775f3dfe639055284350282896edaa4b84e3c75a8948dddb9c"
   license "MIT"
 
   depends_on "python@3.13"
 
+  # Zero runtime dependencies (Python stdlib only), so no `resource` blocks
+  # are required — virtualenv_install_with_resources installs the sdist alone
+  # and links both `pe` and `prompt-enhancer` console scripts into bin.
   def install
-    # Install Python package
-    system "python3", "-m", "pip", "install", "--prefix=#{prefix}", "."
-
-    # Create the CLI entry point manually (no pip scripts on some setups)
-    (bin/"prompt-enhancer").write <<~EOS
-      #!/bin/sh
-      exec "#{Formula["python@3.13"].opt_bin}/python3" -m prompt_enhancer.cli "$@"
-    EOS
-    chmod 0755, bin/"prompt-enhancer"
+    virtualenv_install_with_resources
   end
 
   test do
-    system "#{bin}/prompt-enhancer", "version"
+    assert_match "prompt-enhancer #{version}", shell_output("#{bin}/pe version")
+    assert_match "prompt-enhancer #{version}", shell_output("#{bin}/prompt-enhancer version")
   end
 end
