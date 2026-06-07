@@ -170,7 +170,7 @@ Each agent produces a different enhancement style. Claude is philosophical, Augg
 ## Install
 
 ```bash
-pip install pe-cli
+pip install prompt-enhancer-cli
 # or: pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
 # or: brew install hongphuc5497/tap/prompt-enhancer
 # or: curl install.sh | sh
@@ -210,7 +210,7 @@ Before the first `git tag v1.5.0 && git push --tags` will publish anything:
 
 1. Sign in at <https://pypi.org/manage/account/publishing/>
 2. Add a "pending publisher":
-   - **PyPI Project Name:** `pe-cli` (the name `prompt-enhancer` was already taken)
+   - **PyPI Project Name:** `prompt-enhancer-cli` (the bare name `prompt-enhancer` was already taken)
    - **Owner:** `hongphuc5497`
    - **Repository:** `prompt-enhancer`
    - **Workflow filename:** `release.yml`

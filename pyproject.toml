@@ -1,5 +1,5 @@
 [project]
-name = "pe-cli"
+name = "prompt-enhancer-cli"
 version = "1.5.0"
 description = "Reverse-engineered from Auggie's Ctrl+P — transforms rough ideas into production system prompts for AI coding agents"
 readme = "README.md"

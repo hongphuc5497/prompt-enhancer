@@ -4,14 +4,16 @@ name: Release to PyPI
 # Uses PyPI Trusted Publishing (OIDC) — no API token needed.
 #
 # One-time setup required on pypi.org BEFORE this workflow can publish:
-#   1. Register the project name `pe-cli`: https://pypi.org/manage/account/publishing/
+#   1. Register the project name `prompt-enhancer-cli`:
+#      https://pypi.org/manage/account/publishing/
 #   2. Add a "pending publisher" for hongphuc5497/prompt-enhancer with
 #      workflow file `release.yml` and environment `pypi`.
 #   3. After the first successful publish, the publisher becomes permanent.
 #
-# Note: PyPI distribution name is `pe-cli` (the name `prompt-enhancer` was
-# already taken on PyPI). The GitHub repo, import package, and CLI binaries
-# (`pe` / `prompt-enhancer`) are unchanged.
+# Note: PyPI distribution name is `prompt-enhancer-cli` (the bare name
+# `prompt-enhancer` was already taken on PyPI). The GitHub repo, the
+# `prompt_enhancer` import package, and the `pe` / `prompt-enhancer` CLI
+# binaries are unchanged.
 
 on:
   push:
@@ -60,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/pe-cli
+      url: https://pypi.org/p/prompt-enhancer-cli
     permissions:
       id-token: write  # required for Trusted Publishing
     steps:
