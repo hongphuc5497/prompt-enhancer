@@ -17,6 +17,8 @@ Severity levels:
 
 import re
 
+from . import term
+
 # Canonical sections and accepted synonyms (case-insensitive substring match).
 CANONICAL_SECTIONS = [
     ("role",     ["role", "persona", "identity"]),
@@ -120,21 +122,36 @@ def score(findings):
 
 
 def format_report(findings, score_value, color=True):
-    """Format findings as a human-readable terminal report."""
-    if color:
-        red, yel, cyn, dim, rst = "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m"
-    else:
-        red = yel = cyn = dim = rst = ""
-    icons = {"error": f"{red}✖{rst}", "warning": f"{yel}⚠{rst}", "info": f"{cyn}ℹ{rst}"}
+    """Format findings as a human-readable terminal report.
+
+    Shares glyphs, the branded header, and the dim divider with the rest of
+    the CLI via term.py. The `color` flag is honored explicitly so `pe lint
+    --no-color` stays plain even on a TTY.
+    """
+    def col(text, name, bold=False):
+        if not color:
+            return text
+        prefix = term.ANSI["bold"] if bold else ""
+        return f"{prefix}{term.ANSI.get(name, '')}{text}{term.ANSI['reset']}"
+
+    width = 60
+    icons = {
+        "error": col("✖", "red"),
+        "warning": col("⚠", "yellow"),
+        "info": col("ℹ", "cyan"),
+    }
     lines = []
     if not findings:
         lines.append(f"  {icons['info']} No issues found.")
     else:
         for f in findings:
             icon = icons.get(f["severity"], "•")
-            lines.append(f"  {icon} {dim}L{f['line']:>3}{rst}  [{f['code']}] {f['message']}")
+            loc = col(f"L{f['line']:>3}", "dim")
+            lines.append(f"  {icon} {loc}  [{f['code']}] {f['message']}")
     counts = {sev: sum(1 for f in findings if f["severity"] == sev)
               for sev in ("error", "warning", "info")}
-    summary = f"  errors: {counts['error']}   warnings: {counts['warning']}   info: {counts['info']}   score: {score_value}/100"
-    bar = "─" * 60
-    return "\n".join([bar, "  pe lint — static prompt analysis", bar, *lines, "", summary, bar])
+    summary = (f"  errors: {counts['error']}   warnings: {counts['warning']}"
+               f"   info: {counts['info']}   score: {score_value}/100")
+    bar = col(term.BOX["h"] * width, "dim")
+    title = col("  ⚡ pe lint — static analysis", "cyan", bold=True)
+    return "\n".join([title, bar, *lines, "", summary, bar])

@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.0 (2026-06-07) — A Joy to Look At
+- **TUI overhaul (zero new dependencies)** — extracted a centralized terminal
+  foundation in `term.py`: ANSI color policy (honors `NO_COLOR` / `TERM=dumb`),
+  display-width-aware layout (⚡ and CJK count as 2 cells), boxed `panel`,
+  `header` branding, `footer`, `rule`, and `truncate` — each with an ASCII
+  fallback for dumb terminals and pipes.
+- **Live interactive dashboard** — `pe dashboard` now opens a live, scrollable
+  view by default on a TTY. Alt-screen + hidden cursor, signal-safe restore on
+  `SIGINT`/`SIGTERM`. Keys: `j/↓ k/↑` scroll, `g/G` top/bottom, `space` page,
+  `q/Esc` quit. The Recent table is a scroll window over the full history, not a
+  fixed slice. Footer is honest per mode (no fake scroll keys in one-shot).
+- **`--refresh N`** — auto-reloads records and redraws every N seconds (`0`,
+  the default, stays event-driven with zero idle CPU).
+- **`--ascii` / non-TTY fallback** — piping or redirecting `pe dashboard` emits
+  clean ASCII and exits immediately (no hang, no alt-screen escapes).
+- **Unified CLI branding** — `view.py`, `dashboard.py`, and `lint.py` all render
+  through `term.py` for consistent headers, footers, and rules.
+- **Per-record agent delta attribution** fixed in the dashboard stats.
+- Test suite grew from 50 → 60 (added `TestTerm` coverage and a per-record
+  delta-attribution regression test).
+
 ## v1.5.0 (2026-06-05) — Ready for the world
 - **Python baseline bumped to 3.12+** (tested against 3.12, 3.13, 3.14). Drops 3.11.
 - **`pe lint`** — static analysis of system prompts (no API key, no LLM). Detects

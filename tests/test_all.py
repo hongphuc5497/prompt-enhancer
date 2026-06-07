@@ -255,6 +255,23 @@ class TestDashboard(unittest.TestCase):
         # Recent
         self.assertEqual(len(stats["recent"]), 3)
 
+    def test_agent_delta_attributed_per_record(self):
+        # Regression: deltas must attach to the agent of THIS record, not the
+        # global last delta. Distinct deltas + a no-benchmark record catch the
+        # old cross-contamination bug.
+        records = [
+            {"timestamp": "2026-06-04T15:00:00Z", "agent": "claude",
+             "benchmark": {"before": {"total": 10}, "after": {"total": 30}}},  # +20
+            {"timestamp": "2026-06-04T15:01:00Z", "agent": "codex",
+             "benchmark": {"before": {"total": 5}, "after": {"total": 10}}},   # +5
+            {"timestamp": "2026-06-04T15:02:00Z", "agent": "gpt"},             # no benchmark
+        ]
+        stats = compute_stats(records)
+        eff = {agent: avg_d for agent, avg_d, _count, _fails in stats["agent_effectiveness"]}
+        self.assertEqual(eff["claude"], 20)
+        self.assertEqual(eff["codex"], 5)
+        self.assertEqual(eff["gpt"], 0)  # no benchmark → no delta, not the global last
+
     def test_load_records_empty(self):
         records = load_records(self.store_file)
         self.assertEqual(records, [])
@@ -478,6 +495,69 @@ class TestBlindJudge(unittest.TestCase):
         from prompt_enhancer.agents import run_via_agent
         with self.assertRaises(RuntimeError):
             run_via_agent("hi", "no-such-agent")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Shared terminal primitives (term.py)
+# ═══════════════════════════════════════════════════════════════════
+
+from prompt_enhancer import term
+
+
+class TestTerm(unittest.TestCase):
+    def test_display_width_counts_wide_and_ignores_ansi(self):
+        self.assertEqual(term.display_width("⚡"), 2)
+        self.assertEqual(term.display_width("中文"), 4)
+        self.assertEqual(term.display_width("abc"), 3)
+        colored = term.ANSI["cyan"] + "abc" + term.ANSI["reset"]
+        self.assertEqual(term.display_width(colored), 3)
+
+    def test_panel_rows_are_all_equal_width(self):
+        p = term.panel("Title", "plain\nemoji ⚡ row\nCJK 中文 row",
+                       width=40, use_ascii=True)
+        widths = {term.display_width(line) for line in p.split("\n")}
+        self.assertEqual(widths, {40})
+
+    def test_truncate_respects_display_width(self):
+        out = term.truncate("hello world this is long", 12)
+        self.assertLessEqual(term.display_width(out), 12)
+        self.assertTrue(out.endswith("…"))
+
+    def test_rule_width_and_ascii_fallback(self):
+        self.assertEqual(term.display_width(term.strip_ansi(term.rule(40))), 40)
+        ascii_rule = term.strip_ansi(term.rule(10, use_ascii=True))
+        self.assertEqual(ascii_rule, "-" * 10)
+
+    def test_header_brands_title_and_right_aligns(self):
+        lines = term.header("pe dashboard", "v9.9.9", width=60)
+        self.assertEqual(len(lines), 2)
+        title = term.strip_ansi(lines[0])
+        self.assertIn("⚡ pe dashboard", title)
+        self.assertTrue(title.endswith("v9.9.9"))
+        self.assertEqual(term.display_width(title), 60)
+        self.assertEqual(term.display_width(term.strip_ansi(lines[1])), 60)
+
+    def test_footer_joins_and_handles_empty(self):
+        self.assertEqual(term.footer([]), "")
+        joined = term.strip_ansi(term.footer(["a", "b"], use_ascii=True))
+        self.assertEqual(joined, "  a  |  b")
+
+    def test_read_key_returns_sentinel_when_stdin_not_tty(self):
+        # Force the non-TTY path so this is deterministic whether tests are
+        # launched from a pipe or an interactive terminal.
+        with patch("prompt_enhancer.term.sys.stdin") as stdin:
+            stdin.isatty.return_value = False
+            self.assertEqual(term.read_key(), term.NO_TTY)
+
+    def test_copy_to_clipboard_detects_tool(self):
+        with patch("prompt_enhancer.term.shutil.which", return_value="/usr/bin/pbcopy"), \
+             patch("prompt_enhancer.term.subprocess.run") as run:
+            self.assertTrue(term.copy_to_clipboard("hi"))
+            run.assert_called_once()
+
+    def test_copy_to_clipboard_returns_false_without_tool(self):
+        with patch("prompt_enhancer.term.shutil.which", return_value=None):
+            self.assertFalse(term.copy_to_clipboard("hi"))
 
 
 if __name__ == "__main__":

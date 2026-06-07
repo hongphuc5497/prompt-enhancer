@@ -27,7 +27,8 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-VERSION = "1.5.0"
+from . import __version__ as VERSION
+from . import term
 
 # ═══════════════════════════════════════════════════════════════════
 # Config
@@ -555,14 +556,16 @@ def cmd_benchmark(args):
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
-    BAR = "═" * 60
+    width = term.terminal_width()
     dims = [
         ("role_clarity", "Role Clarity"), ("context_sufficiency", "Context Sufficiency"),
         ("instruction_specificity", "Instruction Specificity"), ("format_structure", "Format Structure"),
         ("example_quality", "Example Quality"), ("constraint_tightness", "Constraint Tightness"),
         ("output_validation", "Output Validation"),
     ]
-    print(f"\n{BAR}\n  PROMPT QUALITY BENCHMARK — SurePrompts 7-Dimension Rubric\n{BAR}")
+    print()
+    for line in term.header("pe benchmark — 7-dimension rubric", f"v{VERSION}", width):
+        print(line)
     if judge_via or judge_model:
         judge_label = judge_via or (judge_model and f"model={judge_model}") or "default"
         gen_label = "API" if args.enhance else "input"
@@ -585,7 +588,8 @@ def cmd_benchmark(args):
             print(f"  {label:<28} {str(b_s):>7} {str(a_s):>7} {'+' + str(d) if d > 0 else str(d):>5}")
         else:
             print(f"  {label:<28} {str(b_s):>7} {str(a_s):>7} {'—':>5}")
-    print(f"\n{BAR}")
+    print()
+    print(term.rule(width))
 
 
 def cmd_store(args):
@@ -704,13 +708,19 @@ def cmd_doctor(args):
         checks.append((f"Agent: {agent}", status == "ready", binary or status))
 
     # Print
-    print(f"prompt-enhancer {VERSION} — Health Check\n")
+    width = term.terminal_width()
+    print()
+    for line in term.header("pe doctor — health check", f"v{VERSION}", width):
+        print(line)
     for name, ok, detail in checks:
         icon = "✅" if ok else "❌"
         print(f"  {icon} {name:<22} {detail}")
+    print(term.rule(width))
 
     all_ok = all(ok for _, ok, _ in checks)
-    print(f"\nOverall: {'✅ Healthy' if all_ok else '❌ Issues found'}")
+    status = (term.colorize("Healthy", "green", bold=True) if all_ok
+              else term.colorize("Issues found", "red", bold=True))
+    print(f"  Overall: {'✅' if all_ok else '❌'} {status}")
 
 
 def cmd_lint(args):
@@ -919,6 +929,7 @@ def main():
             json_out=args.json,
             ascii_mode=args.ascii,
             show_prompts=getattr(args, 'show_prompts', False),
+            refresh=getattr(args, 'refresh', 0),
         )
     elif args.command == "version":
         print(f"prompt-enhancer {VERSION}")

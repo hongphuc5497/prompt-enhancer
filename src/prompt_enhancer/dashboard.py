@@ -8,138 +8,23 @@ Designed per Auggie's review: actionable metrics > pretty boxes.
 import json
 import os
 import sys
-import shutil
-import time
+import signal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# ═══════════════════════════════════════════════════════════════════
-# ANSI helpers
-# ═══════════════════════════════════════════════════════════════════
-
-ANSI = {
-    "reset": "\033[0m",
-    "bold": "\033[1m",
-    "dim": "\033[2m",
-    "cyan": "\033[38;5;51m",
-    "violet": "\033[38;5;99m",
-    "green": "\033[38;5;120m",
-    "red": "\033[38;5;203m",
-    "yellow": "\033[38;5;220m",
-    "white": "\033[38;5;255m",
-    "gray": "\033[38;5;245m",
-    "bg_dark": "\033[48;5;234m",
-}
-
-UNICODE_BLOCKS = "▁▂▃▄▅▆▇█"
-ASCII_BLOCKS = "._-~=+#@"
-
-BOX = {
-    "h": "─", "v": "│",
-    "tl": "┌", "tr": "┐", "bl": "└", "br": "┘",
-    "t": "┬", "b": "┴", "l": "├", "r": "┤", "x": "┼"
-}
-
-
-def colorize(text, color, bold=False):
-    """Apply ANSI color. No-op if NO_COLOR or not TTY."""
-    if not _use_color():
-        return text
-    prefix = ANSI.get("bold", "") if bold else ""
-    return f"{prefix}{ANSI.get(color, '')}{text}{ANSI['reset']}"
-
-
-def _use_color():
-    if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
-        return False
-    return sys.stdout.isatty()
-
-
-def _is_tty():
-    return sys.stdout.isatty()
-
-
-def _blocks(use_ascii=False):
-    return ASCII_BLOCKS if use_ascii else UNICODE_BLOCKS
-
+from . import term
 
 # ═══════════════════════════════════════════════════════════════════
-# Sparkline
+# Shared primitives — all live in term.py now
 # ═══════════════════════════════════════════════════════════════════
 
-def sparkline(values, width=20, use_ascii=False, label=""):
-    """Render a Unicode sparkline from a list of numeric values."""
-    if not values:
-        return "(no data)"
-
-    blocks = _blocks(use_ascii)
-    vmin, vmax = min(values), max(values)
-    if vmax == vmin:
-        vmax = vmin + 1
-
-    chars = []
-    for v in values:
-        idx = int((v - vmin) / (vmax - vmin) * (len(blocks) - 1))
-        chars.append(blocks[max(0, min(idx, len(blocks) - 1))])
-
-    result = "".join(chars)
-    if label:
-        result = f"{label} {result}"
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Bar chart
-# ═══════════════════════════════════════════════════════════════════
-
-def bar_chart(items, max_width=30, use_ascii=False, value_fmt="{value}", sort=True):
-    """Render a horizontal bar chart. items = [(label, value), ...]."""
-    if not items:
-        return "(no data)"
-
-    if sort:
-        items = sorted(items, key=lambda x: -x[1])
-
-    max_val = max(v for _, v in items) if items else 1
-    max_label = max(len(str(l)) for l, _ in items) if items else 10
-    fill_char = "#" if use_ascii else "█"
-
-    lines = []
-    for label, val in items:
-        bar_len = int((val / max(max_val, 1)) * max_width)
-        bar = fill_char * max(bar_len, 1)
-        v_str = value_fmt.format(value=val)
-        lines.append(f"  {str(label):<{max_label}}  {bar} {v_str}")
-
-    return "\n".join(lines)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Panel rendering
-# ═══════════════════════════════════════════════════════════════════
-
-def panel(title, content, width=60, accent="cyan"):
-    """Render a bordered panel."""
-    title_display = f" {title} "[:width - 4]
-    top = f"{BOX['tl']}{colorize(title_display.ljust(width - 4, BOX['h']), accent, bold=True)}{BOX['tr']}"
-    middle_lines = content.split("\n")
-    middle = "\n".join(
-        f"{BOX['v']} {line.ljust(width - 4)} {BOX['v']}"
-        for line in middle_lines
-    )
-    bottom = f"{BOX['bl']}{BOX['h'] * (width - 2)}{BOX['br']}"
-    return f"{top}\n{middle}\n{bottom}"
-
-
-def panel_pair(left_title, left_content, right_title, right_content, total_width=120, use_ascii=False):
-    """Render two panels side-by-side."""
-    hw = total_width // 2 - 2
-    left = panel(left_title, left_content, hw, "cyan").split("\n")
-    right = panel(right_title, right_content, hw, "violet").split("\n")
-    max_lines = max(len(left), len(right))
-    left += [" " * (hw + 2)] * (max_lines - len(left))
-    right += [" " * (hw + 2)] * (max_lines - len(right))
-    return "\n".join(f"{l}  {r}" for l, r in zip(left, right))
+ANSI = term.ANSI
+BOX = term.BOX
+colorize = term.colorize
+sparkline = term.sparkline      # re-exported for tests and callers
+bar_chart = term.bar_chart      # re-exported for tests and callers
+panel = term.panel
+panel_pair = term.panel_pair
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -195,6 +80,7 @@ def compute_stats(records):
     failures = 0
 
     for r in records:
+        record_delta = None
         bm = r.get("benchmark")
         if bm:
             b = bm.get("before", {}).get("total")
@@ -202,7 +88,8 @@ def compute_stats(records):
             if isinstance(b, int) and isinstance(a, int):
                 before_scores.append(b)
                 after_scores.append(a)
-                deltas.append(a - b)
+                record_delta = a - b
+                deltas.append(record_delta)
 
         status = r.get("status", "ok")
         if status in ("error", "failed", "timeout"):
@@ -214,8 +101,9 @@ def compute_stats(records):
         by_agent[agent]["count"] += 1
         if status in ("error", "failed", "timeout"):
             by_agent[agent]["fails"] += 1
-        if deltas:
-            by_agent[agent]["deltas"].append(deltas[-1])
+        # Attribute the delta only to the agent of THIS record (not the global last).
+        if record_delta is not None:
+            by_agent[agent]["deltas"].append(record_delta)
 
     # Agent effectiveness
     agent_eff = []
@@ -255,18 +143,30 @@ def compute_stats(records):
 # Rendering
 # ═══════════════════════════════════════════════════════════════════
 
-def render_dashboard(stats, use_ascii=False, show_prompts=False):
-    """Render the full dashboard."""
+def render_dashboard(stats, use_ascii=False, show_prompts=False,
+                     scroll=0, visible=8, recent_all=None,
+                     live=False, return_lines=False, refresh=0):
+    """Render the full dashboard.
+
+    The Recent table is a scroll window: `recent_all[scroll:scroll+visible]`.
+    `recent_all` defaults to stats' last-10 snapshot; the live view passes the
+    full history so it can page through everything. With return_lines=True the
+    composed rows are returned (for repositioned redraw) instead of printed.
+    """
     if not stats or stats.get("total", 0) == 0:
-        print("No enhancement data yet. Run 'pe persona' or 'pe enhance-task' to get started.")
+        msg = "No enhancement data yet. Run 'pe persona' or 'pe enhance-task' to get started."
+        if return_lines:
+            return [msg]
+        print(msg)
         return
 
-    total_width = min(shutil.get_terminal_size().columns, 120)
+    total_width = term.terminal_width(120)
     narrow = total_width < 80
+    h = "-" if use_ascii else BOX["h"]
+    out = []
 
-    # Header
-    print(colorize(f"\n  ⚡ pe dashboard{' ' * (total_width - 25)}v1.3.0", "cyan", bold=True))
-    print(colorize(f"{BOX['h'] * total_width}", "dim"))
+    # Header — shared term.header keeps the ⚡ brand + divider consistent.
+    out.extend(term.header("pe dashboard", f"v{term.VERSION}", total_width, use_ascii))
 
     # ── Row 1: Summary + Score Trend ──
     summary_lines = [
@@ -281,17 +181,21 @@ def render_dashboard(stats, use_ascii=False, show_prompts=False):
     if stats.get("score_trend_after"):
         before_spark = sparkline(stats["score_trend_before"], 20, use_ascii)
         after_spark = sparkline(stats["score_trend_after"], 20, use_ascii)
-        n = len(stats["score_trend_after"])
+        tb = stats["score_trend_before"]
+        ta = stats["score_trend_after"]
+        n = len(ta)
+        avg_b = sum(tb) / len(tb) if tb else 0
+        avg_a = sum(ta) / len(ta) if ta else 0
         trend_lines = [
             f"  Last {n}:",
-            f"  Before: {before_spark} → avg {stats['score_trend_before'][-1] if stats['score_trend_before'] else '?'}",
-            f"  After:  {after_spark} → avg {stats['score_trend_after'][-1] if stats['score_trend_after'] else '?'}",
+            f"  Before: {before_spark} → avg {avg_b:.0f}",
+            f"  After:  {after_spark} → avg {avg_a:.0f}",
         ]
     else:
         trend_lines = ["  No benchmark data", "  Run 'pe benchmark --enhance ...' to see trends"]
     trend = "\n".join(trend_lines)
 
-    print(panel_pair("Summary", summary, "Score Trend", trend, total_width, use_ascii))
+    out.append(panel_pair("Summary", summary, "Score Trend", trend, total_width, use_ascii))
 
     # ── Row 2: Agent Effectiveness + Velocity ──
     if stats.get("agent_effectiveness"):
@@ -306,16 +210,18 @@ def render_dashboard(stats, use_ascii=False, show_prompts=False):
     else:
         vel_content = "  No velocity data"
 
-    print(panel_pair("Agent Effectiveness (avg Δ)", agent_content, "Velocity (by day)", vel_content, total_width, use_ascii))
+    out.append(panel_pair("Agent Effectiveness (avg Δ)", agent_content, "Velocity (by day)", vel_content, total_width, use_ascii))
 
     # ── Row 3: Recent runs ──
-    recents = stats.get("recent", [])
+    recents = recent_all if recent_all is not None else stats.get("recent", [])
+    total_recent = len(recents)
     if recents:
         recent_width = total_width - 4
         header_line = f" {'When':<17} {'Agent':<10} {'Before→After':>13} {'Δ':>6} {'Status':<8} {'Seed' if show_prompts else 'ID'}"
-        sep_line = "─" * (recent_width - 2)
+        sep_line = h * (recent_width - 2)
         lines = [header_line, sep_line]
-        for r in recents[:8]:
+        window = recents[scroll:scroll + visible] if visible else []
+        for r in window:
             ts = r.get("timestamp", "")[:16].replace("T", " ")
             agent = (r.get("agent") or "—")[:10]
             bm = r.get("benchmark") or {}
@@ -335,16 +241,108 @@ def render_dashboard(stats, use_ascii=False, show_prompts=False):
         recent_content = " No recent runs"
 
     recent_title = f"Recent ({'unredacted' if show_prompts else 'redacted'})"
-    recent_panel = panel(recent_title, recent_content, total_width - 2, "green")
-    print(recent_panel)
+    out.append(panel(recent_title, recent_content, total_width - 2, "green", use_ascii))
 
-    # Footer
-    print(colorize(f"{BOX['h'] * total_width}", "dim"))
-    footer_parts = ["[j↓] scroll  [k↑] scroll  [q] quit"]
-    if _is_tty():
-        footer_parts.append("[--ascii] no-unicode")
-    print(colorize("  " + "  │  ".join(footer_parts), "dim"))
+    # Footer — honest about what the keys actually do in each mode.
+    out.append(term.rule(total_width, use_ascii))
+    if live:
+        lo = scroll + 1 if total_recent else 0
+        hi = min(scroll + visible, total_recent)
+        footer_parts = [
+            "[j/↓ k/↑] scroll",
+            "[g/G] top/bottom",
+            "[q] quit",
+            f"rows {lo}–{hi} of {total_recent}",
+        ]
+        if refresh > 0:
+            footer_parts.append(f"↻ {refresh}s")
+    else:
+        footer_parts = []
+        if sys.stdout.isatty():
+            footer_parts.append("[--ascii] no-unicode")
+    if footer_parts:
+        out.append(term.footer(footer_parts, use_ascii))
+
+    if return_lines:
+        return out
     print()
+    print("\n".join(out))
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Live scrollable view
+# ═══════════════════════════════════════════════════════════════════
+
+def _live_dashboard_loop(stats, recent_all, use_ascii=False, show_prompts=False,
+                         refresh=0, reload_data=None):
+    """Alt-screen dashboard that scrolls the Recent table through the full
+    history. j/↓ and k/↑ move one row, g/G jump to top/bottom, space pages
+    down, q/Esc quit. The alt screen and cursor are always restored — even
+    on SIGINT/SIGTERM.
+
+    When refresh > 0 the keypress wait times out every `refresh` seconds and
+    `reload_data()` (returning (stats, recent_all)) is called to pull in new
+    records, keeping the current scroll position.
+    """
+    out = sys.stdout
+    scroll = 0
+
+    def _restore():
+        out.write(term.ALT_SCREEN_EXIT)
+        out.flush()
+        term.show_cursor(out)
+
+    def _on_signal(signum, _frame):
+        _restore()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    prev_sigint = signal.signal(signal.SIGINT, _on_signal)
+    prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
+    out.write(term.ALT_SCREEN_ENTER)
+    term.hide_cursor(out)
+    try:
+        while True:
+            # Size the Recent window to the live terminal: render once with no
+            # rows to measure fixed overhead (each row is exactly one line).
+            total = len(recent_all)
+            overhead = len(render_dashboard(
+                stats, use_ascii, show_prompts, scroll=scroll, visible=0,
+                recent_all=recent_all, live=True, return_lines=True, refresh=refresh))
+            visible = max(1, term.terminal_height() - overhead - 1)
+            max_scroll = max(0, total - visible)
+            scroll = min(scroll, max_scroll)
+
+            lines = render_dashboard(
+                stats, use_ascii, show_prompts, scroll=scroll, visible=visible,
+                recent_all=recent_all, live=True, return_lines=True, refresh=refresh)
+            out.write(term.CLEAR)
+            out.write("\n".join(lines))
+            out.flush()
+
+            key = term.read_key(timeout=refresh if refresh > 0 else None)
+            if key is None:
+                # Refresh tick: pull fresh data, keep scroll position.
+                if reload_data is not None:
+                    stats, recent_all = reload_data()
+                continue
+            if key in (term.NO_TTY, "q", "Q", "esc", "\x03", "\x04"):
+                break
+            elif key in ("j", "down"):
+                scroll = min(scroll + 1, max_scroll)
+            elif key in ("k", "up"):
+                scroll = max(scroll - 1, 0)
+            elif key == "g":
+                scroll = 0
+            elif key in ("G",):
+                scroll = max_scroll
+            elif key == " ":
+                scroll = min(scroll + visible, max_scroll)
+    finally:
+        _restore()
+        signal.signal(signal.SIGINT, prev_sigint)
+        signal.signal(signal.SIGTERM, prev_sigterm)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -352,22 +350,26 @@ def render_dashboard(stats, use_ascii=False, show_prompts=False):
 # ═══════════════════════════════════════════════════════════════════
 
 def cmd_dashboard(store_path=None, agent=None, since=None, json_out=False,
-                  ascii_mode=False, show_prompts=False):
+                  ascii_mode=False, show_prompts=False, refresh=0):
     """Main entry point for pe dashboard."""
-    records = load_records(store_path)
-
-    # Filter
-    if agent:
-        records = [r for r in records if r.get("agent") == agent]
+    # Validate --since once, up front, so the live reload path can reuse it.
+    since_dt = None
     if since:
         since_dt = parse_since(since)
-        if since_dt:
-            records = [r for r in records
-                       if datetime.fromisoformat(r.get("timestamp", "1970-01-01T00:00:00Z").replace("Z", "+00:00")) >= since_dt]
-        else:
+        if not since_dt:
             print(f"Invalid --since: {since}", file=sys.stderr)
             sys.exit(1)
 
+    def _load():
+        recs = load_records(store_path)
+        if agent:
+            recs = [r for r in recs if r.get("agent") == agent]
+        if since_dt:
+            recs = [r for r in recs
+                    if datetime.fromisoformat(r.get("timestamp", "1970-01-01T00:00:00Z").replace("Z", "+00:00")) >= since_dt]
+        return recs
+
+    records = _load()
     stats = compute_stats(records)
 
     if json_out:
@@ -375,6 +377,18 @@ def cmd_dashboard(store_path=None, agent=None, since=None, json_out=False,
         return
 
     # Detect ASCII mode
-    use_ascii = ascii_mode or not _is_tty() or os.environ.get("TERM") == "dumb"
+    use_ascii = ascii_mode or not sys.stdout.isatty() or os.environ.get("TERM") == "dumb"
 
-    render_dashboard(stats, use_ascii=use_ascii, show_prompts=show_prompts)
+    # Live scrollable view by default on an interactive TTY; one-shot otherwise
+    # (pipes, redirects, TERM=dumb). The live view pages through full history.
+    interactive = (sys.stdout.isatty() and sys.stdin.isatty()
+                   and os.environ.get("TERM") != "dumb")
+    if interactive and stats.get("total", 0) > 0:
+        def _reload():
+            recs = _load()
+            return compute_stats(recs), recs[::-1]
+
+        _live_dashboard_loop(stats, records[::-1], use_ascii, show_prompts,
+                             refresh=refresh, reload_data=_reload)
+    else:
+        render_dashboard(stats, use_ascii=use_ascii, show_prompts=show_prompts)

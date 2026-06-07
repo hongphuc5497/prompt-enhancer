@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://pypi.org/project/prompt-enhancer-cli/"><img src="https://img.shields.io/pypi/v/prompt-enhancer-cli?logo=pypi&logoColor=white&label=PyPI&color=3775A9" alt="PyPI"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
-  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.5.0-blue" alt="Version"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.6.0-blue" alt="Version"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.12+-blue" alt="Python 3.12+"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/dependencies-0-lightgrey" alt="Zero dependencies"></a>
 </p>
@@ -63,8 +63,14 @@ pe install "a security reviewer" --agent claude
 # Benchmark before vs after
 pe benchmark --enhance "a Go backend dev"
 
+# Lint a prompt (static analysis, no API key)
+pe lint enhanced.md
+
 # Health check
 pe doctor
+
+# Live analytics dashboard
+pe dashboard
 
 # View analytics
 pe store stats
@@ -170,6 +176,20 @@ pe store export --format csv  # Export for analysis
 ```
 
 First run shows a privacy notice. Use `--no-store` to opt out.
+
+## Dashboard
+
+`pe dashboard` opens a live, scrollable analytics TUI — zero dependencies, pure stdlib ANSI. It's display-width aware (emoji and CJK align correctly) and degrades gracefully to ASCII on dumb terminals and in pipes.
+
+```bash
+pe dashboard                  # live view (default on a TTY)
+pe dashboard --refresh 30     # auto-reload + redraw every 30s
+pe dashboard --since 7d       # filter to the last 7 days
+pe dashboard --agent claude   # filter by delegated agent
+pe dashboard --ascii          # ASCII-only output
+```
+
+In live view: `j`/`↓` `k`/`↑` scroll, `g`/`G` jump to top/bottom, `space` pages, `q`/`Esc` quits. Piping or redirecting prints a clean one-shot snapshot and exits immediately (no hang, no escape codes).
 
 ## Demo
 

@@ -2,32 +2,21 @@
 Rich prompt viewer — ANSI-styled terminal rendering for enhanced prompts.
 
 Renders the 7-section markdown output with color-coded headers,
-box-drawing panels, and a navigation footer. Reuses the same
-ANSI/Unicode primitives as dashboard.py for visual consistency.
+box-drawing panels, and an interactive footer. All ANSI/Unicode and
+display-width primitives come from term.py so styling stays consistent
+across the CLI.
 """
 
-import os
 import sys
 import time
-import shutil
+import signal
 import threading
 
+from . import term
 
-# ═══════════════════════════════════════════════════════════════════
-# ANSI primitives (inlined to avoid circular imports from dashboard.py)
-# ═══════════════════════════════════════════════════════════════════
-
-ANSI = {
-    "reset": "\033[0m", "bold": "\033[1m", "dim": "\033[2m",
-    "cyan": "\033[38;5;51m", "violet": "\033[38;5;99m",
-    "green": "\033[38;5;120m", "red": "\033[38;5;203m",
-    "yellow": "\033[38;5;220m", "white": "\033[38;5;255m",
-    "gray": "\033[38;5;245m",
-}
-
-BOX = {
-    "h": "─", "v": "│", "tl": "┌", "tr": "┐", "bl": "└", "br": "┘"
-}
+# Thin aliases so call sites read naturally.
+c = term.colorize
+BOX = term.BOX
 
 SECTION_COLORS = {
     "ROLE": "cyan",
@@ -45,47 +34,31 @@ SECTION_COLORS = {
 }
 
 
-def _use_color():
-    if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
-        return False
-    return sys.stdout.isatty()
-
-
-def _is_tty():
-    return sys.stdout.isatty()
-
-
-def c(text, color, bold=False):
-    if not _use_color():
-        return text
-    prefix = ANSI.get("bold", "") if bold else ""
-    return f"{prefix}{ANSI.get(color, '')}{text}{ANSI['reset']}"
-
-
 # ═══════════════════════════════════════════════════════════════════
 # Rich prompt renderer
 # ═══════════════════════════════════════════════════════════════════
 
 def render_prompt(markdown_text, agent=None, duration_ms=None):
     """Render enhanced markdown prompt with ANSI-styled panels.
-    
-    Auto-detects TTY. If not a TTY, falls back to raw text.
+
+    Auto-detects TTY. If stdout is not a TTY, falls back to raw text.
+    When stdin is also a TTY, an interactive key loop follows the render.
     """
-    if not _is_tty():
+    if not sys.stdout.isatty():
         # Not a TTY — just print raw text (for pipes, CI, etc.)
         print(markdown_text)
         return
 
     lines = markdown_text.split("\n")
-    width = min(shutil.get_terminal_size().columns, 100)
+    width = term.terminal_width(100)
 
-    # Header bar
+    # Header bar (pad by display width so ANSI codes don't skew alignment)
     header = f"  {c('⚡', 'cyan')} {c('Prompt Enhancer', 'white', bold=True)}"
     if agent:
         header += f"  {c(f'via {agent}', 'dim')}"
     if duration_ms:
         header += f"  {c(f'{duration_ms/1000:.1f}s', 'dim')}"
-    header += " " * (width - len(header) - 1)
+    header += " " * max(0, width - term.display_width(header) - 1)
     print()
     print(c(BOX["h"] * width, "dim"))
     print(header)
@@ -124,11 +97,15 @@ def render_prompt(markdown_text, agent=None, duration_ms=None):
     if current_section and section_lines:
         _flush_section(current_section, section_lines, width)
 
-    # Footer
+    # Footer — only advertise keys the viewer actually handles.
     print()
     print(c(BOX["h"] * width, "dim"))
-    print(f"  {c('[c] copy', 'dim')}  {c('[r] raw', 'dim')}  {c('[s] store', 'dim')}  {c('[q] quit', 'dim')}")
+    print(f"  {c('[c] copy', 'dim')}  {c('[r] show raw', 'dim')}  {c('[q] done', 'dim')}")
     print()
+
+    # Interactive key loop (requires an interactive stdin too).
+    if sys.stdin.isatty():
+        _interactive_loop(markdown_text)
 
 
 def _flush_section(section_name, lines, width):
@@ -160,14 +137,14 @@ def _flush_section(section_name, lines, width):
 
 
 def _wrap_text(text, max_width):
-    """Simple word wrap."""
-    if len(text) <= max_width:
+    """Simple word wrap, measured by display width (CJK/emoji aware)."""
+    if term.display_width(text) <= max_width:
         return [text]
     words = text.split()
     lines = []
     current = ""
     for word in words:
-        if len(current) + len(word) + 1 <= max_width:
+        if term.display_width(current) + term.display_width(word) + 1 <= max_width:
             current = (current + " " + word).strip()
         else:
             if current:
@@ -176,6 +153,33 @@ def _wrap_text(text, max_width):
     if current:
         lines.append(current)
     return lines
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Interactive viewer loop
+# ═══════════════════════════════════════════════════════════════════
+
+def _interactive_loop(markdown_text):
+    """Single-key actions on the rendered prompt: copy, show raw, quit.
+
+    No alt-screen: the rendered output stays in scrollback so the prompt
+    remains readable and copyable after quitting. Each action is one-shot.
+    """
+    while True:
+        key = term.read_key()
+        # NO_TTY (non-interactive), q, Enter, Esc, Ctrl-C/D all exit.
+        if key in (term.NO_TTY, "q", "Q", "esc", "\r", "\n", "\x03", "\x04"):
+            return
+        if key in ("c", "C"):
+            if term.copy_to_clipboard(markdown_text):
+                print(f"  {c('✔ copied to clipboard', 'green')}")
+            else:
+                print(f"  {c('✖ no clipboard tool found (install xclip/wl-clipboard)', 'red')}")
+        elif key in ("r", "R"):
+            print()
+            print(c("  ── raw markdown ──", "dim"))
+            print(markdown_text)
+            print(c("  ──────────────────", "dim"))
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -194,11 +198,15 @@ class Spinner:
         self._running = False
         self._thread = None
         self.start_time = None
+        self._prev_sigint = None
+        self._prev_sigterm = None
 
     def __enter__(self):
         self.start_time = time.time()
         self._running = True
         if self.stream.isatty():
+            term.hide_cursor(self.stream)
+            self._install_signal_handlers()
             self._thread = threading.Thread(target=self._spin, daemon=True)
             self._thread.start()
         return self
@@ -209,9 +217,38 @@ class Spinner:
             self._thread.join(timeout=0.5)
         elapsed = time.time() - self.start_time
         if self.stream.isatty():
-            self.stream.write(f"\r\033[K")  # clear spinner line
+            self._restore_signal_handlers()
+            self.stream.write("\r\033[K")  # clear spinner line
             self.stream.write(f"{c('✔', 'green')} {self.message}  {c(f'({elapsed:.1f}s)', 'dim')}\n")
+            term.show_cursor(self.stream)
             self.stream.flush()
+
+    def _install_signal_handlers(self):
+        """Restore the cursor if the run is interrupted, then re-raise."""
+        def handler(signum, _frame):
+            self._running = False
+            term.show_cursor(self.stream)
+            self.stream.write("\n")
+            self.stream.flush()
+            self._restore_signal_handlers()
+            if signum == signal.SIGINT:
+                raise KeyboardInterrupt
+            sys.exit(128 + signum)
+        try:
+            self._prev_sigint = signal.signal(signal.SIGINT, handler)
+            self._prev_sigterm = signal.signal(signal.SIGTERM, handler)
+        except ValueError:
+            # Not in the main thread — signals can't be installed; skip.
+            pass
+
+    def _restore_signal_handlers(self):
+        try:
+            if self._prev_sigint is not None:
+                signal.signal(signal.SIGINT, self._prev_sigint)
+            if self._prev_sigterm is not None:
+                signal.signal(signal.SIGTERM, self._prev_sigterm)
+        except (ValueError, TypeError):
+            pass
 
     def _spin(self):
         i = 0
