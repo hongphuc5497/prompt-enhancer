@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.1 (2026-06-08) — Config hardening
+- **`LLM_BASE_URL` tolerates a trailing `/v1`** — the client appends
+  `/v1/chat/completions` itself, so a base URL of `https://host`,
+  `https://host/`, or `https://host/v1` now all resolve identically instead of
+  producing a doubled `/v1/v1` path (404). Normalization happens once in
+  `load_config()`.
+- **`pe store` with no subcommand defaults to `list`** instead of erroring with
+  "Unknown store action: None".
+- Test suite grew 60 → 63 (added `TestConfig` base-URL normalization cases).
+
 ## v1.6.0 (2026-06-07) — A Joy to Look At
 - **TUI overhaul (zero new dependencies)** — extracted a centralized terminal
   foundation in `term.py`: ANSI color policy (honors `NO_COLOR` / `TERM=dumb`),
