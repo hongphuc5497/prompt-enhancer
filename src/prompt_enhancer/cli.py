@@ -61,9 +61,12 @@ def load_config():
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
                 os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+    base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-len("/v1")]
     return {
         "api_key": os.environ.get("LLM_API_KEY", ""),
-        "base_url": os.environ.get("LLM_BASE_URL", "https://api.deepseek.com"),
+        "base_url": base_url,
         "model": os.environ.get("LLM_MODEL", "deepseek-chat"),
     }
 
@@ -593,7 +596,7 @@ def cmd_benchmark(args):
 
 
 def cmd_store(args):
-    action = args.store_action
+    action = args.store_action or "list"
     if action == "list":
         records = store_read()
         records.sort(key=lambda r: r["timestamp"], reverse=True)

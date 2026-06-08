@@ -62,6 +62,27 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config["base_url"], "https://api.test.com")
         self.assertEqual(config["model"], "test-model")
 
+    def test_base_url_strips_trailing_slash(self):
+        """Trailing slashes are stripped from the base URL."""
+        with patch.dict(os.environ, {"LLM_BASE_URL": "https://api.test.com/"}, clear=True), \
+             patch("pathlib.Path.exists", return_value=False):
+            config = load_config()
+        self.assertEqual(config["base_url"], "https://api.test.com")
+
+    def test_base_url_strips_v1_suffix(self):
+        """A trailing /v1 is stripped so callers don't double the path."""
+        with patch.dict(os.environ, {"LLM_BASE_URL": "https://api.test.com/v1"}, clear=True), \
+             patch("pathlib.Path.exists", return_value=False):
+            config = load_config()
+        self.assertEqual(config["base_url"], "https://api.test.com")
+
+    def test_base_url_strips_v1_with_trailing_slash(self):
+        """A trailing /v1/ is normalized the same as /v1."""
+        with patch.dict(os.environ, {"LLM_BASE_URL": "https://api.test.com/v1/"}, clear=True), \
+             patch("pathlib.Path.exists", return_value=False):
+            config = load_config()
+        self.assertEqual(config["base_url"], "https://api.test.com")
+
     def test_version_is_string(self):
         self.assertIsInstance(VERSION, str)
         self.assertIn(".", VERSION)
