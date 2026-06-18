@@ -4,8 +4,8 @@ class PromptEnhancer < Formula
   desc "Reverse-engineered from Auggie's Ctrl+P — rough ideas → production system prompts"
   homepage "https://github.com/hongphuc5497/prompt-enhancer"
   # Published to PyPI as `prompt-enhancer-cli` (the bare name was already taken).
-  url "https://files.pythonhosted.org/packages/ea/33/1539a28522d359fb037cac70a5eb24123496253e2646888e2987ddab9d69/prompt_enhancer_cli-1.5.0.tar.gz"
-  sha256 "63ad5539dd414f775f3dfe639055284350282896edaa4b84e3c75a8948dddb9c"
+  url "https://files.pythonhosted.org/packages/72/87/403d3b7b60c43e4fa421194404319a07f4f63458e7553f1a3ff16af475d7/prompt_enhancer_cli-1.6.1.tar.gz"
+  sha256 "62d35b528ded087ade0c530e99782267b7c065d24b92eb70635cbbf85365b842"
   license "MIT"
 
   depends_on "python@3.13"

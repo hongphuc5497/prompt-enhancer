@@ -52,6 +52,16 @@ PROFILES = ["senior-dev", "architect", "reviewer", "sre", "product", "mentor"]
 CONTEXT_PATTERNS = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md"]
 STACK_SIGNALS = ["package.json", "pyproject.toml", "Cargo.toml", "go.mod", "Makefile", "docker-compose.yml"]
 
+# Dirs never worth scanning for context — heavy, vendored, or VCS internals.
+IGNORE_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__",
+               "dist", "build", "target", ".next", ".nuxt", ".mypy_cache",
+               ".pytest_cache", ".ruff_cache", ".tox", "vendor", ".idea",
+               ".gradle", ".cache"}
+
+# Filenames/suffixes we never read into a prompt (avoid leaking secrets to the LLM).
+SENSITIVE_EXACT = {"id_rsa", "id_ed25519", "id_dsa", "id_ecdsa"}
+SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+
 
 def load_config():
     env_file = Path.home() / ".prompt-enhancer.env"
@@ -75,34 +85,56 @@ def load_config():
 # Workspace Context (Auggie's #1 blocker fix)
 # ═══════════════════════════════════════════════════════════════════
 
+def _is_sensitive(name):
+    """True if a filename looks like a secret we shouldn't ship to an LLM."""
+    return (name in SENSITIVE_EXACT
+            or name.startswith(".env")
+            or name.endswith(SENSITIVE_SUFFIXES))
+
+
 def collect_context(project_dir, max_content=2000):
-    """Discover and read project context files. Mirrors Auggie's workspace awareness."""
-    cwd = Path(project_dir).resolve()
+    """Discover and read project context files. Mirrors Auggie's workspace
+    awareness. Prunes heavy/vendored dirs (IGNORE_DIRS) and skips
+    secret-looking files so they never reach the LLM."""
+    root = Path(project_dir).resolve()
     context_parts = []
 
-    # Context files (AGENTS.md, CLAUDE.md, etc.)
-    for pattern in CONTEXT_PATTERNS:
-        for found in cwd.rglob(pattern):
-            try:
-                content = found.read_text()
-                if len(content) > max_content:
-                    content = content[:max_content] + "\n... (truncated)"
-                context_parts.append(f"## {found.name}\n```\n{content}\n```")
-            except (PermissionError, OSError):
-                continue
-            break  # only first match per pattern
+    # Context files (AGENTS.md, CLAUDE.md, etc.) — recursive but pruned;
+    # the shallowest match for each pattern wins.
+    wanted = {Path(p).name for p in CONTEXT_PATTERNS}
+    found = {}  # basename -> (depth, Path)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
+        depth = len(Path(dirpath).relative_to(root).parts)
+        for fn in filenames:
+            if fn in wanted and not _is_sensitive(fn):
+                prev = found.get(fn)
+                if prev is None or depth < prev[0]:
+                    found[fn] = (depth, Path(dirpath) / fn)
 
-    # Stack signals (package.json, Cargo.toml, etc.)
+    for pattern in CONTEXT_PATTERNS:  # stable, documented order
+        entry = found.get(Path(pattern).name)
+        if not entry:
+            continue
+        try:
+            content = entry[1].read_text()
+        except (PermissionError, OSError):
+            continue
+        if len(content) > max_content:
+            content = content[:max_content] + "\n... (truncated)"
+        context_parts.append(f"## {entry[1].name}\n```\n{content}\n```")
+
+    # Stack signals (package.json, Cargo.toml, etc.) — project root only.
     for signal in STACK_SIGNALS:
-        path = cwd / signal
-        if path.exists():
+        path = root / signal
+        if path.exists() and not _is_sensitive(path.name):
             try:
                 content = path.read_text()
-                if len(content) > max_content:
-                    content = content[:max_content] + "\n... (truncated)"
-                context_parts.append(f"## {signal} (tech stack)\n```\n{content}\n```")
             except (PermissionError, OSError):
                 continue
+            if len(content) > max_content:
+                content = content[:max_content] + "\n... (truncated)"
+            context_parts.append(f"## {signal} (tech stack)\n```\n{content}\n```")
 
     return "\n\n".join(context_parts)
 
@@ -111,32 +143,87 @@ def collect_context(project_dir, max_content=2000):
 # LLM
 # ═══════════════════════════════════════════════════════════════════
 
-def call_llm(prompt, config, model=None, max_tokens=4096, temperature=0.7):
-    url = f"{config['base_url'].rstrip('/')}/v1/chat/completions"
+class LLMError(Exception):
+    """An LLM API call failed. Raised instead of exiting so the enhancement
+    functions stay importable; the CLI boundary in main() turns it into a
+    clean error message."""
+
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _endpoint(base_url, suffix):
+    """Join base_url with an OpenAI-style path suffix without doubling /v1.
+
+    Handles a bare host, a host ending in /v1, or a full URL already ending in
+    the suffix. `suffix` is given without a leading slash (e.g. 'chat/completions').
+    """
+    base = base_url.rstrip("/")
+    suffix = suffix.strip("/")
+    if base.endswith("/" + suffix):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/{suffix}"
+    return f"{base}/v1/{suffix}"
+
+
+def _sleep_backoff(attempt, retry_after=None):
+    """Exponential backoff (1s, 2s, 4s, ...), honoring a Retry-After header."""
+    delay = float(2 ** attempt)
+    if retry_after:
+        try:
+            delay = max(delay, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    time.sleep(delay)
+
+
+def call_llm(prompt, config, model=None, max_tokens=4096, temperature=0.7,
+             retries=3, timeout=180):
+    """Call an OpenAI-compatible chat-completions endpoint.
+
+    Retries transient failures (timeouts, connection errors, 429/5xx) with
+    exponential backoff. Raises LLMError on unrecoverable failures.
+    """
+    url = _endpoint(config["base_url"], "chat/completions")
     body = json.dumps({
         "model": model or config["model"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {config['api_key']}")
-    try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            result = json.loads(resp.read().decode())
+
+    last_err = None
+    for attempt in range(retries):
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {config['api_key']}")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode())
             if "choices" not in result:
-                raise ValueError(f"Unexpected API response: {json.dumps(result)[:200]}")
+                raise LLMError(f"Unexpected API response: {json.dumps(result)[:200]}")
             return result["choices"][0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()[:500]
-        die(f"API error ({e.code}): {body}")
-    except urllib.error.URLError as e:
-        die(f"Connection error: {e.reason}")
-    except json.JSONDecodeError:
-        die("API returned invalid JSON. Check your LLM_BASE_URL.")
-    except Exception as e:
-        die(f"LLM call failed: {e}")
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode()[:500]
+            except Exception:
+                detail = ""
+            last_err = LLMError(f"API error ({e.code}): {detail}")
+            if e.code in RETRYABLE_STATUS and attempt < retries - 1:
+                _sleep_backoff(attempt, e.headers.get("Retry-After") if e.headers else None)
+                continue
+            raise last_err
+        except (urllib.error.URLError, TimeoutError) as e:
+            reason = getattr(e, "reason", e)
+            last_err = LLMError(f"Connection error: {reason}")
+            if attempt < retries - 1:
+                _sleep_backoff(attempt)
+                continue
+            raise last_err
+        except json.JSONDecodeError:
+            raise LLMError("API returned invalid JSON. Check your LLM_BASE_URL.")
+    raise last_err or LLMError("LLM call failed after retries")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -155,6 +242,8 @@ def store_init():
     if not marker.exists():
         print("📊 Prompt Enhancer stores enhancement history locally.", file=sys.stderr)
         print(f"   Data saved to: {STORE_FILE}", file=sys.stderr)
+        print("   Your seed and discovered workspace files are sent to the configured LLM", file=sys.stderr)
+        print("   (LLM_BASE_URL, or the --via agent); pass --no-context to limit sharing.", file=sys.stderr)
         print("   Use 'pe store delete <id>' or 'pe store clear' to manage.", file=sys.stderr)
         print("   Use --no-store to skip saving. See README for details.", file=sys.stderr)
         print("", file=sys.stderr)
@@ -162,7 +251,14 @@ def store_init():
         marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
-def store_save(seed, enhanced, agent=None, project=None, profile=None, benchmark=None, duration_ms=None):
+def store_save(seed, enhanced, agent=None, project=None, profile=None, benchmark=None,
+               duration_ms=None, generator=None):
+    """Append one enhancement record.
+
+    `agent` = install target (set by `pe install`); `generator` = how it was
+    produced ("api" or the --via agent name). They were historically conflated
+    in `agent`; readers fall back to `agent` for old records.
+    """
     import uuid
     STORE_DIR.mkdir(parents=True, exist_ok=True)
     record = {
@@ -173,6 +269,7 @@ def store_save(seed, enhanced, agent=None, project=None, profile=None, benchmark
         "enhanced": enhanced[:5000],
         "enhanced_length": len(enhanced),
         "agent": agent,
+        "generator": generator,
         "project": project or str(Path.cwd()),
         "profile": profile,
         "benchmark": benchmark,
@@ -347,32 +444,30 @@ def cmd_persona(args):
 
     from . import view
 
+    profile = getattr(args, 'profile', None)
+    project = getattr(args, 'project', str(Path.cwd()))
+    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+
+    t0 = time.time()
     if via:
         # Delegate to existing agent — no API key needed
         from . import agents
         view.log_progress(f"Delegating to {via}...")
         with view.Spinner(f"Enhancing via {via}"):
-            enhanced = agents.enhance(seed, via_agent=via)
+            enhanced = agents.enhance(seed, via_agent=via, workspace_context=workspace)
     else:
         config = load_config()
         if not config["api_key"]:
             die("LLM_API_KEY not set. Use --via <agent> or set API key.")
-        profile = getattr(args, 'profile', None)
-        project = getattr(args, 'project', str(Path.cwd()))
-        workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
         concise = getattr(args, 'concise', False)
         view.log_progress("Calling LLM API...")
         with view.Spinner("Enhancing with LLM"):
-            t0 = time.time()
             enhanced = persona(seed, config, workspace, profile, concise)
-            duration_ms = int((time.time() - t0) * 1000)
-
-    profile = getattr(args, 'profile', None)
-    project = getattr(args, 'project', str(Path.cwd()))
+    duration_ms = int((time.time() - t0) * 1000)
 
     # Output: rich viewer or raw
     if getattr(args, 'json', False):
-        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via, "duration_ms": 0}, ensure_ascii=False))
+        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via, "duration_ms": duration_ms}, ensure_ascii=False))
     elif getattr(args, 'raw', False) or not sys.stdout.isatty():
         print(enhanced)
     else:
@@ -381,7 +476,8 @@ def cmd_persona(args):
     # Save to store
     if not getattr(args, 'no_store', False):
         store_init()
-        store_save(seed, enhanced, via or None, project, profile)
+        store_save(seed, enhanced, generator=(via or "api"), project=project,
+                   profile=profile, duration_ms=duration_ms)
         if not getattr(args, 'json', False) and not getattr(args, 'raw', False):
             view.log_progress(f"Saved to store")
 
@@ -402,26 +498,27 @@ def cmd_enhance_task(args):
 
     from . import view
 
+    project = getattr(args, 'project', str(Path.cwd()))
+    workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
+
+    t0 = time.time()
     if via:
         from . import agents
         view.log_progress(f"Delegating to {via}...")
         with view.Spinner(f"Enhancing via {via}"):
-            enhanced = agents.enhance(seed, via_agent=via)
+            enhanced = agents.enhance(seed, via_agent=via, workspace_context=workspace, task_mode=True)
     else:
         config = load_config()
         if not config["api_key"]:
             die("LLM_API_KEY not set. Use --via <agent> or set API key.")
-        project = getattr(args, 'project', str(Path.cwd()))
-        workspace = collect_context(project) if not getattr(args, 'no_context', False) else ""
         view.log_progress("Calling LLM API...")
         with view.Spinner("Enhancing task with LLM"):
-            t0 = time.time()
             enhanced = enhance_task(seed, config, workspace)
-            duration_ms = int((time.time() - t0) * 1000)
+    duration_ms = int((time.time() - t0) * 1000)
 
     # Output
     if getattr(args, 'json', False):
-        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via}, ensure_ascii=False))
+        print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "via": via, "duration_ms": duration_ms}, ensure_ascii=False))
     elif getattr(args, 'raw', False) or not sys.stdout.isatty():
         print(enhanced)
     else:
@@ -430,7 +527,7 @@ def cmd_enhance_task(args):
     # Save
     if not getattr(args, 'no_store', False):
         store_init()
-        store_save(seed, enhanced, duration_ms=0, project=getattr(args, 'project', str(Path.cwd())))
+        store_save(seed, enhanced, generator=(via or "api"), project=project, duration_ms=duration_ms)
 
     # Clipboard
     if getattr(args, 'copy', False):
@@ -460,7 +557,7 @@ def cmd_install(args):
         print(json.dumps({"status": "ok", "seed": seed[:200], "enhanced": enhanced, "agent": args.agent, "duration_ms": duration_ms}, ensure_ascii=False))
         if not getattr(args, 'no_store', False) and not getattr(args, 'dry_run', False):
             store_init()
-            store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms)
+            store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms, generator="api")
         return
 
     agents = list(AGENT_CONFIGS.keys()) if args.agent == "all" else [args.agent]
@@ -502,7 +599,7 @@ def cmd_install(args):
 
     if not getattr(args, 'no_store', False) and not getattr(args, 'dry_run', False):
         store_init()
-        store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms)
+        store_save(seed, enhanced, args.agent, project, profile, duration_ms=duration_ms, generator="api")
 
 
 def cmd_benchmark(args):
@@ -537,6 +634,7 @@ def cmd_benchmark(args):
             },
             duration_ms=duration_ms,
             project=project,
+            generator="api",
         )
     else:
         before_text = args.before or ""
@@ -605,10 +703,11 @@ def cmd_store(args):
         if getattr(args, 'json', False):
             print(json.dumps(records, indent=2, ensure_ascii=False))
             return
-        print(f"{'ID':<14} {'When':<22} {'Agent':<10} {'Seed'}")
+        print(f"{'ID':<14} {'When':<22} {'Via':<10} {'Seed'}")
         print("-" * 70)
         for r in records:
-            print(f"{r['id']:<14} {r['timestamp'][:19]:<22} {(r.get('agent') or '—'):<10} {r['seed'][:60].replace(chr(10),' ')}")
+            via = r.get('generator') or r.get('agent') or '—'
+            print(f"{r['id']:<14} {r['timestamp'][:19]:<22} {via:<10} {r['seed'][:60].replace(chr(10),' ')}")
     elif action == "stats":
         records = store_read()
         if not records:
@@ -617,14 +716,14 @@ def cmd_store(args):
         total = len(records)
         agents = {}
         for r in records:
-            a = r.get("agent") or "—"
+            a = r.get("generator") or r.get("agent") or "—"
             agents[a] = agents.get(a, 0) + 1
         total_chars = sum(r.get("enhanced_length", 0) for r in records)
         with_bench = sum(1 for r in records if r.get("benchmark"))
         print(f"Total enhancements:  {total}")
         print(f"With benchmarks:     {with_bench}")
         print(f"Total chars stored:  {total_chars:,}")
-        print(f"\nBy agent:")
+        print(f"\nBy generator:")
         for agent, count in sorted(agents.items(), key=lambda x: -x[1]):
             print(f"  {agent:<12} {count:>4}")
     elif action == "search":
@@ -635,7 +734,7 @@ def cmd_store(args):
             print(json.dumps(matches, indent=2, ensure_ascii=False))
             return
         for r in matches[:10]:
-            print(f"\n{'='*60}\nID: {r['id']} | {r['timestamp'][:19]} | Agent: {r.get('agent','—')}")
+            print(f"\n{'='*60}\nID: {r['id']} | {r['timestamp'][:19]} | Via: {r.get('generator') or r.get('agent') or '—'}")
             print(f"Seed: {r['seed'][:120]}")
     elif action == "export":
         records = store_read()
@@ -695,7 +794,7 @@ def cmd_doctor(args):
     if api_set:
         try:
             import urllib.request
-            url = f"{config['base_url'].rstrip('/')}/v1/models"
+            url = _endpoint(config['base_url'], "models")
             req = urllib.request.Request(url)
             req.add_header("Authorization", f"Bearer {config['api_key']}")
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -909,35 +1008,41 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command in ("persona", "enhance"):
-        cmd_persona(args)
-    elif args.command == "enhance-task":
-        cmd_enhance_task(args)
-    elif args.command == "install":
-        cmd_install(args)
-    elif args.command == "benchmark":
-        cmd_benchmark(args)
-    elif args.command == "store":
-        cmd_store(args)
-    elif args.command == "doctor":
-        cmd_doctor(args)
-    elif args.command == "lint":
-        cmd_lint(args)
-    elif args.command == "dashboard":
-        from . import dashboard
-        dashboard.cmd_dashboard(
-            store_path=getattr(args, 'store', None),
-            agent=args.agent,
-            since=args.since,
-            json_out=args.json,
-            ascii_mode=args.ascii,
-            show_prompts=getattr(args, 'show_prompts', False),
-            refresh=getattr(args, 'refresh', 0),
-        )
-    elif args.command == "version":
-        print(f"prompt-enhancer {VERSION}")
-    else:
-        parser.print_help()
+    try:
+        if args.command in ("persona", "enhance"):
+            cmd_persona(args)
+        elif args.command == "enhance-task":
+            cmd_enhance_task(args)
+        elif args.command == "install":
+            cmd_install(args)
+        elif args.command == "benchmark":
+            cmd_benchmark(args)
+        elif args.command == "store":
+            cmd_store(args)
+        elif args.command == "doctor":
+            cmd_doctor(args)
+        elif args.command == "lint":
+            cmd_lint(args)
+        elif args.command == "dashboard":
+            from . import dashboard
+            dashboard.cmd_dashboard(
+                store_path=getattr(args, 'store', None),
+                agent=args.agent,
+                since=args.since,
+                json_out=args.json,
+                ascii_mode=args.ascii,
+                show_prompts=getattr(args, 'show_prompts', False),
+                refresh=getattr(args, 'refresh', 0),
+            )
+        elif args.command == "version":
+            print(f"prompt-enhancer {VERSION}")
+        else:
+            parser.print_help()
+    except (LLMError, RuntimeError) as e:
+        die(str(e))
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

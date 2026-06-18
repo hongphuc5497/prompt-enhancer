@@ -43,10 +43,12 @@ jobs:
       - name: Verify version matches tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          # Version is single-sourced in src/prompt_enhancer/__init__.py
+          # (pyproject.toml reads it dynamically via tool.setuptools.dynamic).
           TAG="${GITHUB_REF##*/v}"
-          PYPROJECT_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "(.+)"/\1/')
-          if [ "$TAG" != "$PYPROJECT_VERSION" ]; then
-            echo "::error::tag v$TAG != pyproject.toml version $PYPROJECT_VERSION"
+          PKG_VERSION=$(grep -E '^__version__ = ' src/prompt_enhancer/__init__.py | head -1 | sed -E 's/__version__ = "(.+)"/\1/')
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "::error::tag v$TAG != __init__.py version $PKG_VERSION"
             exit 1
           fi
 
