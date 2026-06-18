@@ -95,7 +95,7 @@ def compute_stats(records):
         if status in ("error", "failed", "timeout"):
             failures += 1
 
-        agent = r.get("agent") or "—"
+        agent = r.get("generator") or r.get("agent") or "—"
         if agent not in by_agent:
             by_agent[agent] = {"count": 0, "deltas": [], "fails": 0}
         by_agent[agent]["count"] += 1
@@ -210,20 +210,20 @@ def render_dashboard(stats, use_ascii=False, show_prompts=False,
     else:
         vel_content = "  No velocity data"
 
-    out.append(panel_pair("Agent Effectiveness (avg Δ)", agent_content, "Velocity (by day)", vel_content, total_width, use_ascii))
+    out.append(panel_pair("Generator Effectiveness (avg Δ)", agent_content, "Velocity (by day)", vel_content, total_width, use_ascii))
 
     # ── Row 3: Recent runs ──
     recents = recent_all if recent_all is not None else stats.get("recent", [])
     total_recent = len(recents)
     if recents:
         recent_width = total_width - 4
-        header_line = f" {'When':<17} {'Agent':<10} {'Before→After':>13} {'Δ':>6} {'Status':<8} {'Seed' if show_prompts else 'ID'}"
+        header_line = f" {'When':<17} {'Via':<10} {'Before→After':>13} {'Δ':>6} {'Status':<8} {'Seed' if show_prompts else 'ID'}"
         sep_line = h * (recent_width - 2)
         lines = [header_line, sep_line]
         window = recents[scroll:scroll + visible] if visible else []
         for r in window:
             ts = r.get("timestamp", "")[:16].replace("T", " ")
-            agent = (r.get("agent") or "—")[:10]
+            agent = (r.get("generator") or r.get("agent") or "—")[:10]
             bm = r.get("benchmark") or {}
             b = bm.get("before", {}).get("total", "?")
             a = bm.get("after", {}).get("total", "?")
@@ -363,7 +363,7 @@ def cmd_dashboard(store_path=None, agent=None, since=None, json_out=False,
     def _load():
         recs = load_records(store_path)
         if agent:
-            recs = [r for r in recs if r.get("agent") == agent]
+            recs = [r for r in recs if agent in (r.get("generator"), r.get("agent"))]
         if since_dt:
             recs = [r for r in recs
                     if datetime.fromisoformat(r.get("timestamp", "1970-01-01T00:00:00Z").replace("Z", "+00:00")) >= since_dt]

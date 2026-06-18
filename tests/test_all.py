@@ -9,6 +9,10 @@ Or from the repo root:
     python3 -m pytest
 """
 
+import argparse
+import contextlib
+import io
+import itertools
 import json
 import os
 import sys
@@ -33,6 +37,7 @@ from prompt_enhancer.dashboard import (
 from prompt_enhancer.agents import (
     _find_binary, get_available_agents, AGENT_ENHANCERS,
 )
+from prompt_enhancer import cli
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -579,6 +584,242 @@ class TestTerm(unittest.TestCase):
     def test_copy_to_clipboard_returns_false_without_tool(self):
         with patch("prompt_enhancer.term.shutil.which", return_value=None):
             self.assertFalse(term.copy_to_clipboard("hi"))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Endpoint construction (call_llm /v1 handling)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestEndpoint(unittest.TestCase):
+    def test_endpoint_never_doubles_v1(self):
+        f = cli._endpoint
+        self.assertEqual(f("https://h", "chat/completions"), "https://h/v1/chat/completions")
+        self.assertEqual(f("https://h/", "chat/completions"), "https://h/v1/chat/completions")
+        self.assertEqual(f("https://h/v1", "chat/completions"), "https://h/v1/chat/completions")
+        self.assertEqual(f("https://h/v1/", "chat/completions"), "https://h/v1/chat/completions")
+        self.assertEqual(f("https://h/v1/chat/completions", "chat/completions"),
+                         "https://h/v1/chat/completions")
+        self.assertEqual(f("https://h/v1", "models"), "https://h/v1/models")
+
+
+def _ok_response(payload):
+    """A urlopen() return value usable as a context manager."""
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode()
+    cm = MagicMock()
+    cm.__enter__.return_value = resp
+    cm.__exit__.return_value = False
+    return cm
+
+
+class TestCallLLMRetry(unittest.TestCase):
+    CONFIG = {"api_key": "k", "base_url": "https://h", "model": "m"}
+
+    def test_retries_then_succeeds(self):
+        import urllib.error
+        ok = _ok_response({"choices": [{"message": {"content": "hello"}}]})
+        attempts = {"n": 0}
+
+        def fake(req, timeout=None):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise urllib.error.URLError("temporary")
+            return ok
+
+        with patch("prompt_enhancer.cli.urllib.request.urlopen", side_effect=fake), \
+             patch("prompt_enhancer.cli.time.sleep") as slept:
+            out = cli.call_llm("p", self.CONFIG)
+        self.assertEqual(out, "hello")
+        self.assertEqual(attempts["n"], 3)
+        self.assertEqual(slept.call_count, 2)
+
+    def test_raises_llmerror_after_exhausting_retries(self):
+        import urllib.error
+        with patch("prompt_enhancer.cli.urllib.request.urlopen",
+                   side_effect=urllib.error.URLError("down")), \
+             patch("prompt_enhancer.cli.time.sleep"):
+            with self.assertRaises(cli.LLMError):
+                cli.call_llm("p", self.CONFIG)
+
+    def test_non_retryable_status_raises_immediately(self):
+        import urllib.error
+        err = urllib.error.HTTPError("u", 400, "Bad Request", None, None)
+        with patch("prompt_enhancer.cli.urllib.request.urlopen", side_effect=err), \
+             patch("prompt_enhancer.cli.time.sleep") as slept:
+            with self.assertRaises(cli.LLMError):
+                cli.call_llm("p", self.CONFIG)
+            slept.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# collect_context hardening (dir pruning + sensitive-file skipping)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestContextHardening(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.project = Path(self.tmpdir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_prunes_ignored_dirs(self):
+        (self.project / "AGENTS.md").write_text("root rules here")
+        vendored = self.project / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        (vendored / "CLAUDE.md").write_text("vendored noise")
+        gitdir = self.project / ".git"
+        gitdir.mkdir()
+        (gitdir / "AGENTS.md").write_text("git internal noise")
+        ctx = collect_context(str(self.project))
+        self.assertIn("root rules here", ctx)
+        self.assertNotIn("vendored noise", ctx)
+        self.assertNotIn("git internal noise", ctx)
+
+    def test_prefers_shallowest_match(self):
+        (self.project / "AGENTS.md").write_text("ROOT level")
+        sub = self.project / "sub"
+        sub.mkdir()
+        (sub / "AGENTS.md").write_text("NESTED level")
+        ctx = collect_context(str(self.project))
+        self.assertIn("ROOT level", ctx)
+        self.assertNotIn("NESTED level", ctx)
+
+    def test_is_sensitive(self):
+        self.assertTrue(cli._is_sensitive(".env"))
+        self.assertTrue(cli._is_sensitive(".env.local"))
+        self.assertTrue(cli._is_sensitive("server.pem"))
+        self.assertTrue(cli._is_sensitive("id_rsa"))
+        self.assertFalse(cli._is_sensitive("AGENTS.md"))
+        self.assertFalse(cli._is_sensitive("package.json"))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Command handlers (regression coverage for duration_ms + generator)
+# ═══════════════════════════════════════════════════════════════════
+
+class _DummyCM:
+    """Stand-in for view.Spinner so handler tests don't spawn threads/timers."""
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class TestHandlers(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.store_dir = Path(self.tmpdir)
+        self.store_file = self.store_dir / "store.jsonl"
+        self.project = self.store_dir / "proj"
+        self.project.mkdir()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _common_patches(self):
+        # A monotonic fake clock: each time.time() call advances 0.5s, so a
+        # handler's (t0, end) pair yields a deterministic 500ms duration.
+        clock = itertools.count(1000.0, 0.5)
+        return [
+            patch("prompt_enhancer.cli.STORE_FILE", self.store_file),
+            patch("prompt_enhancer.cli.STORE_DIR", self.store_dir),
+            patch("prompt_enhancer.view.Spinner", _DummyCM),
+            patch("prompt_enhancer.view.log_progress"),
+            patch("prompt_enhancer.cli.time.time", side_effect=lambda: next(clock)),
+        ]
+
+    def _run(self, fn, args, *extra_patches):
+        buf = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for cm in self._common_patches() + list(extra_patches):
+                stack.enter_context(cm)
+            stack.enter_context(contextlib.redirect_stdout(buf))
+            fn(args)
+        return buf.getvalue()
+
+    def _records(self):
+        """Read the isolated temp store directly (the STORE_FILE patch is no
+        longer active outside _run, so cli.store_read would hit the real file)."""
+        if not self.store_file.exists():
+            return []
+        return [json.loads(line) for line in self.store_file.read_text().splitlines()
+                if line.strip()]
+
+    def test_persona_records_real_duration_and_generator(self):
+        args = argparse.Namespace(
+            seed="a rust dev", file=None, via=None, profile=None,
+            project=str(self.project), no_context=True, concise=False,
+            json=True, no_store=False, copy=False, raw=False)
+        out = self._run(
+            cli.cmd_persona, args,
+            patch("prompt_enhancer.cli.load_config",
+                  return_value={"api_key": "k", "base_url": "https://h", "model": "m"}),
+            patch("prompt_enhancer.cli.call_llm", return_value="# System Prompt: X"),
+        )
+        payload = json.loads(out)
+        self.assertEqual(payload["duration_ms"], 500)
+        recs = self._records()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["duration_ms"], 500)
+        self.assertEqual(recs[0]["generator"], "api")
+        self.assertIsNone(recs[0]["agent"])
+
+    def test_enhance_task_records_real_duration(self):
+        args = argparse.Namespace(
+            seed="fix the login bug", file=None, via=None,
+            project=str(self.project), no_context=True,
+            json=True, no_store=False, copy=False, raw=False)
+        out = self._run(
+            cli.cmd_enhance_task, args,
+            patch("prompt_enhancer.cli.load_config",
+                  return_value={"api_key": "k", "base_url": "https://h", "model": "m"}),
+            patch("prompt_enhancer.cli.enhance_task", return_value="do the thing"),
+        )
+        payload = json.loads(out)
+        self.assertEqual(payload["duration_ms"], 500)
+        recs = self._records()
+        self.assertEqual(recs[0]["duration_ms"], 500)
+        self.assertEqual(recs[0]["generator"], "api")
+
+    def test_enhance_task_via_passes_context_and_task_mode(self):
+        (self.project / "AGENTS.md").write_text("PROJECT CONVENTIONS xyz")
+        args = argparse.Namespace(
+            seed="fix bug", file=None, via="claude",
+            project=str(self.project), no_context=False,
+            json=True, no_store=False, copy=False, raw=False)
+        with patch("prompt_enhancer.agents.enhance", return_value="enhanced") as m:
+            self._run(cli.cmd_enhance_task, args)
+        m.assert_called_once()
+        _, kwargs = m.call_args
+        self.assertTrue(kwargs.get("task_mode"))
+        self.assertIn("PROJECT CONVENTIONS xyz", kwargs.get("workspace_context", ""))
+        recs = self._records()
+        self.assertEqual(recs[0]["generator"], "claude")
+        self.assertIsNone(recs[0]["agent"])
+
+    def test_install_records_target_and_generator(self):
+        args = argparse.Namespace(
+            seed="a security reviewer", file=None, agent="claude", profile=None,
+            project=str(self.project), no_context=True, dry_run=False, force=True,
+            json=True, no_store=False, via=None)
+        self._run(
+            cli.cmd_install, args,
+            patch("prompt_enhancer.cli.load_config",
+                  return_value={"api_key": "k", "base_url": "https://h", "model": "m"}),
+            patch("prompt_enhancer.cli.call_llm", return_value="# System Prompt: Reviewer"),
+        )
+        recs = self._records()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["agent"], "claude")       # install target
+        self.assertEqual(recs[0]["generator"], "api")
+        self.assertEqual(recs[0]["duration_ms"], 500)
 
 
 if __name__ == "__main__":

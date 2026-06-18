@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://pypi.org/project/prompt-enhancer-cli/"><img src="https://img.shields.io/pypi/v/prompt-enhancer-cli?logo=pypi&logoColor=white&label=PyPI&color=3775A9" alt="PyPI"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
-  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.6.0-blue" alt="Version"></a>
+  <a href="https://github.com/hongphuc5497/prompt-enhancer/releases"><img src="https://img.shields.io/badge/version-1.6.1-blue" alt="Version"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/python-3.12+-blue" alt="Python 3.12+"></a>
   <a href="https://github.com/hongphuc5497/prompt-enhancer"><img src="https://img.shields.io/badge/dependencies-0-lightgrey" alt="Zero dependencies"></a>
 </p>
@@ -37,12 +37,13 @@ pip install git+https://github.com/hongphuc5497/prompt-enhancer.git
 
 Set your API key:
 ```bash
-echo "LLM_API_KEY=*** > ~/.prompt-enhancer.env
+echo "LLM_API_KEY=sk-your-key" > ~/.prompt-enhancer.env
 ```
 
 Config (`~/.prompt-enhancer.env`):
 ```env
-LLM_API_KEY=***i...ps://api.deepseek.com
+LLM_API_KEY=sk-your-key
+LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 ```
 
@@ -199,8 +200,9 @@ See [docs/demo.tape](docs/demo.tape) for the VHS terminal recording script.
 
 ```env
 # ~/.prompt-enhancer.env
-LLM_API_KEY=***i...ps://api.deepseek.com   # Default
-LLM_MODEL=deepseek-chat                    # Default
+LLM_API_KEY=sk-your-key
+LLM_BASE_URL=https://api.deepseek.com   # default; a trailing /v1 is tolerated
+LLM_MODEL=deepseek-chat
 ```
 
 ## Contributing

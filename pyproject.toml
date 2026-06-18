@@ -1,6 +1,6 @@
 [project]
 name = "prompt-enhancer-cli"
-version = "1.6.1"
+dynamic = ["version"]
 description = "Reverse-engineered from Auggie's Ctrl+P — transforms rough ideas into production system prompts for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,7 +11,9 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -34,3 +36,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "prompt_enhancer.__version__" }

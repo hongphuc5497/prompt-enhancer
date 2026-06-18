@@ -11,13 +11,13 @@ Supported agents:
     opencode — OpenCode (opencode --print)
 """
 
-import subprocess
-import sys
 import os
-from pathlib import Path
+import re
+import shutil
+import subprocess
 
 
-ENHANCEMENT_PROMPT_TEMPLATE = """Transform this rough idea into a 7-section system prompt for AI coding agents. 
+PERSONA_PROMPT_TEMPLATE = """Transform this rough idea into a 7-section system prompt for AI coding agents.
 
 SECTIONS: ROLE → CONTEXT → BEHAVIORAL RULES → TECHNICAL GUIDELINES → OUTPUT FORMAT → PITFALLS/GUARDRAILS → EXAMPLES
 
@@ -27,7 +27,7 @@ RULES:
 - Be concise — 2-4 bullets per section
 - Include a "pro tip" at the end
 - Output ONLY the system prompt markdown, start with "# System Prompt: <Role>"
-
+{context_block}
 ## Rough idea
 {seed}
 
@@ -35,31 +35,60 @@ RULES:
 # System Prompt:"""
 
 
+TASK_PROMPT_TEMPLATE = """You are a prompt enhancer for AI coding agents. Transform a vague task request into a clear, actionable prompt.
+
+RULES:
+- Add relevant file references and context from the workspace
+- Structure the task into clear steps
+- Include relevant coding conventions and patterns
+- Ask clarifying questions if the task is ambiguous
+- Keep it concise — 3-5 sentences
+- Output ONLY the enhanced task prompt, no preamble
+{context_block}
+## Raw task request
+{seed}
+
+## Output
+Output ONLY the enhanced task prompt."""
+
+
+def _context_block(workspace_context):
+    """Render an optional workspace-context section for delegated prompts."""
+    if not workspace_context:
+        return ""
+    return f"\n## Workspace context\n{workspace_context}\n"
+
+
+def _build_prompt(seed, workspace_context="", task_mode=False):
+    """Build the delegated prompt. task_mode picks the task-refinement template
+    instead of the 7-section persona template."""
+    template = TASK_PROMPT_TEMPLATE if task_mode else PERSONA_PROMPT_TEMPLATE
+    return template.format(seed=seed, context_block=_context_block(workspace_context))
+
+
+def _strip_auggie(output):
+    """Strip Auggie's thinking/exploration prefix and ANSI escape codes."""
+    if "🤖" in output:
+        output = output.split("🤖")[-1].strip()
+    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)
+
+
 def _find_binary(names):
-    """Find the first available binary from a list of names."""
+    """Find the first available binary from a list of names (resolved via PATH)."""
     for name in names:
-        # Check common locations
-        for prefix in ["", str(Path.home() / ".local/bin/"), str(Path.home() / ".nvm/versions/node/v26.1.0/bin/")]:
-            path = os.path.join(prefix, name)
-            if os.path.exists(path) and os.access(path, os.X_OK):
-                return path
-        # Try which
-        try:
-            result = subprocess.run(["which", name], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
+        path = shutil.which(name)
+        if path:
+            return path
     return None
 
 
-def enhance_via_claude(seed, config=None):
+def enhance_via_claude(seed, config=None, workspace_context="", task_mode=False):
     """Enhance via Claude Code."""
     binary = _find_binary(["claude"])
     if not binary:
         raise RuntimeError("Claude Code not found. Install: npm install -g @anthropic-ai/claude-code")
 
-    prompt = ENHANCEMENT_PROMPT_TEMPLATE.format(seed=seed)
+    prompt = _build_prompt(seed, workspace_context, task_mode)
     result = subprocess.run(
         [binary, "-p", prompt],
         capture_output=True, text=True, timeout=120,
@@ -70,13 +99,13 @@ def enhance_via_claude(seed, config=None):
     return result.stdout.strip()
 
 
-def enhance_via_codex(seed, config=None):
+def enhance_via_codex(seed, config=None, workspace_context="", task_mode=False):
     """Enhance via Codex CLI."""
     binary = _find_binary(["codex"])
     if not binary:
         raise RuntimeError("Codex not found. Install: npm install -g @openai/codex")
 
-    prompt = ENHANCEMENT_PROMPT_TEMPLATE.format(seed=seed)
+    prompt = _build_prompt(seed, workspace_context, task_mode)
     result = subprocess.run(
         [binary, prompt],
         capture_output=True, text=True, timeout=120,
@@ -87,13 +116,13 @@ def enhance_via_codex(seed, config=None):
     return result.stdout.strip()
 
 
-def enhance_via_auggie(seed, config=None):
+def enhance_via_auggie(seed, config=None, workspace_context="", task_mode=False):
     """Enhance via Auggie (Augment)."""
     binary = _find_binary(["auggie"])
     if not binary:
         raise RuntimeError("Auggie not found. Install: npm install -g @augmentcode/auggie")
 
-    prompt = ENHANCEMENT_PROMPT_TEMPLATE.format(seed=seed)
+    prompt = _build_prompt(seed, workspace_context, task_mode)
     result = subprocess.run(
         [binary, "--print", prompt],
         capture_output=True, text=True, timeout=120,
@@ -101,24 +130,16 @@ def enhance_via_auggie(seed, config=None):
     )
     if result.returncode != 0:
         raise RuntimeError(f"Auggie failed: {result.stderr[:200]}")
-
-    output = result.stdout.strip()
-    # Strip Auggie's thinking/exploration prefix
-    if "🤖" in output:
-        output = output.split("🤖")[-1].strip()
-    # Strip ANSI escape codes
-    import re
-    output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)
-    return output
+    return _strip_auggie(result.stdout.strip())
 
 
-def enhance_via_opencode(seed, config=None):
+def enhance_via_opencode(seed, config=None, workspace_context="", task_mode=False):
     """Enhance via OpenCode."""
     binary = _find_binary(["opencode"])
     if not binary:
         raise RuntimeError("OpenCode not found.")
 
-    prompt = ENHANCEMENT_PROMPT_TEMPLATE.format(seed=seed)
+    prompt = _build_prompt(seed, workspace_context, task_mode)
     result = subprocess.run(
         [binary, "--print", prompt],
         capture_output=True, text=True, timeout=120,
@@ -169,22 +190,22 @@ def run_via_agent(prompt, via_agent, timeout=180):
         raise RuntimeError(f"{via_agent} failed: {result.stderr[:200]}")
     output = result.stdout.strip()
     if via_agent == "auggie":
-        if "🤖" in output:
-            output = output.split("🤖")[-1].strip()
-        import re
-        output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)
+        output = _strip_auggie(output)
     return output
 
 
-def enhance(seed, via_agent=None, config=None):
+def enhance(seed, via_agent=None, config=None, workspace_context="", task_mode=False):
     """Enhance a seed prompt. If via_agent is set, delegate to that agent.
     Otherwise, use the API key (legacy path).
+
+    workspace_context is injected into the delegated prompt; task_mode=True
+    selects the inline task-refinement template instead of the persona template.
     """
     if via_agent:
         enhancer = AGENT_ENHANCERS.get(via_agent)
         if not enhancer:
             raise RuntimeError(f"Unknown agent: {via_agent}. Supported: {', '.join(AGENT_ENHANCERS.keys())}")
-        return enhancer(seed, config)
+        return enhancer(seed, config, workspace_context=workspace_context, task_mode=task_mode)
 
     # Fall through to API-key mode — caller must handle
     raise RuntimeError("No enhancement method available. Use --via <agent> or set LLM_API_KEY.")
